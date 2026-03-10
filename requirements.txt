@@ -1,0 +1,28 @@
+# ============================================================
+# YoloHome Gateway - Python Dependencies
+# ============================================================
+
+# --- IoT / MQTT ---
+Adafruit-IO==2.7.2          # Adafruit IO MQTT client
+pyserial==3.5               # Giao tiếp Serial với Yolo:Bit
+
+# --- Computer Vision (Face Recognition) ---
+opencv-python==4.9.0.80     # OpenCV xử lý hình ảnh + Haar Cascade
+opencv-contrib-python==4.9.0.80  # LBPH FaceRecognizer (cv2.face)
+numpy==1.26.4               # Xử lý mảng số (dependency của OpenCV)
+Pillow==10.3.0              # Xử lý ảnh bổ sung
+
+# --- Voice Control ---
+SpeechRecognition==3.10.1   # STT - Google Web Speech API
+gTTS==2.5.1                 # TTS - Google Text-to-Speech
+pygame==2.5.2               # Phát âm thanh TTS
+PyAudio==0.2.14             # Microphone input (cần cài PortAudio trước)
+
+# --- AI / RAG (Tùy chọn - bật GeminiRAGAssistant) ---
+langchain==0.2.0            # LLM orchestration framework
+langchain-google-genai==1.0.3  # Gemini LLM + Embeddings
+faiss-cpu==1.8.0            # Vector store cho RAG
+google-generativeai==0.5.4  # Google Gemini SDK
+
+# --- Logging & Utilities ---
+python-dotenv==1.0.1        # Đọc biến môi trường từ .env (bảo mật API key)

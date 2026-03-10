@@ -1,0 +1,36 @@
+# ============================================================
+# YoloHome Gateway - .gitignore
+# ============================================================
+
+# --- Bảo mật: KHÔNG đưa API key lên git ---
+.env
+config_local.py
+
+# --- Dataset và Model đã huấn luyện (dung lượng lớn) ---
+ai/face_recognition/dataset/*/
+ai/face_recognition/trained_model/*.yml
+ai/face_recognition/trained_model/*.pkl
+
+# --- Log files ---
+logs/*.log
+logs/*.log.*
+logs/face_events/
+
+# --- Python cache ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+
+# --- Virtual environment ---
+venv/
+.venv/
+env/
+
+# --- IDE ---
+.vscode/settings.json
+.idea/
+
+# --- OS ---
+.DS_Store
+Thumbs.db
