@@ -22,6 +22,8 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config
 from core.mqtt_client import MQTTSingleton
 from core.serial_client import SerialSingleton
+from core.database import DatabaseSingleton
+from core.telegram_notifier import TelegramNotifier
 
 logger = logging.getLogger(__name__)
 
@@ -40,8 +42,10 @@ class SensorReader:
     """
 
     def __init__(self):
-        self._mqtt   = MQTTSingleton.get_instance()
-        self._serial = SerialSingleton.get_instance()
+        self._mqtt     = MQTTSingleton.get_instance()
+        self._serial   = SerialSingleton.get_instance()
+        self._db       = DatabaseSingleton.get_instance()
+        self._telegram = TelegramNotifier.get_instance()
 
         self._running = False
         self._thread: threading.Thread = None
@@ -152,6 +156,25 @@ class SensorReader:
             if gas is not None:
                 self._check_gas_threshold(gas)
 
+            # --- Ghi vào SQLite (Persistent Data) ---
+            if temp is not None and humi is not None and gas is not None:
+                try:
+                    self._db.insert_sensor(temp, humi, gas)
+                except Exception as e:
+                    logger.debug(f"[Sensor] DB write error: {e}")
+
+            # --- Rule Engine: đánh giá quy tắc tự động hóa (Phase 4) ---
+            if temp is not None and humi is not None and gas is not None:
+                try:
+                    from core.rule_engine import RuleEngine
+                    RuleEngine.get_instance().evaluate({
+                        "temp": temp,
+                        "humi": humi,
+                        "gas":  gas,
+                    })
+                except Exception as e:
+                    logger.debug(f"[Sensor] Rule Engine error: {e}")
+
             logger.info(f"[Sensor] 📊 T={temp}°C | H={humi}% | Gas={gas}ppm")
             time.sleep(config.SENSOR_READ_INTERVAL)
 
@@ -174,6 +197,7 @@ class SensorReader:
                 logger.warning(f"[Sensor] 🌡️  {alert_msg}")
                 self._mqtt.publish(config.FEED_ALERT, alert_msg)
                 self._mqtt.publish(config.FEED_LOG,   alert_msg)
+                self._telegram.temp_alert(temp)
 
                 # Tự động bật quạt làm mát (REQ-07)
                 logger.info("[Sensor] 🔄 Tự động bật quạt do nhiệt độ cao...")
@@ -196,6 +220,7 @@ class SensorReader:
                 logger.critical(f"[Sensor] ☠️  {alert_msg}")
                 self._mqtt.publish(config.FEED_ALERT, alert_msg)
                 self._mqtt.publish(config.FEED_LOG,   alert_msg)
+                self._telegram.gas_alert(gas)
 
     def _can_send_alert(self, alert_type: str) -> bool:
         """
@@ -228,10 +253,13 @@ class SensorReader:
             payload: "ON" hoặc "OFF" (hoặc "1"/"0")
         """
         value = 1 if payload.upper() in ("ON", "1") else 0
-        logger.info(f"[Sensor] 💡 Lệnh đèn: {'BẬT' if value else 'TẮT'}")
+        logger.info(f"[Sensor] 💡 Lệnh đèn: {'BẬT' if value else 'TắT'}")
         self._serial.send_command("led", value)
+        try:
+            self._db.insert_device_event("led", value, source="mqtt")
+        except Exception:
+            pass
 
-        # Ghi log
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         status = "Bật" if value else "Tắt"
         self._mqtt.publish(config.FEED_LOG, f"[{timestamp}] {status} đèn (Dashboard)")
@@ -244,8 +272,12 @@ class SensorReader:
             payload: "ON" hoặc "OFF"
         """
         value = 1 if payload.upper() in ("ON", "1") else 0
-        logger.info(f"[Sensor] 🌀 Lệnh quạt: {'BẬT' if value else 'TẮT'}")
+        logger.info(f"[Sensor] 🌀 Lệnh quạt: {'BẬT' if value else 'TắT'}")
         self._serial.send_command("fan", value)
+        try:
+            self._db.insert_device_event("fan", value, source="mqtt")
+        except Exception:
+            pass
 
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         status = "Bật" if value else "Tắt"
@@ -259,8 +291,12 @@ class SensorReader:
             payload: "ON" hoặc "OFF"
         """
         value = 1 if payload.upper() in ("ON", "1") else 0
-        logger.info(f"[Sensor] 💧 Lệnh máy bơm: {'BẬT' if value else 'TẮT'}")
+        logger.info(f"[Sensor] 💧 Lệnh máy bơm: {'BẬT' if value else 'TắT'}")
         self._serial.send_command("pump", value)
+        try:
+            self._db.insert_device_event("pump", value, source="mqtt")
+        except Exception:
+            pass
 
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         status = "Bật" if value else "Tắt"
@@ -274,7 +310,17 @@ class SensorReader:
         Trả về snapshot dữ liệu cảm biến mới nhất (thread-safe).
 
         Returns:
-            Dict {"temp": float, "humi": float, "gas": float}
+            Dict {"temperature", "humidity", "gas", "led", "fan", "door", "pump", "timestamp"}
         """
         with self._data_lock:
-            return dict(self._sensor_data)
+            data = dict(self._sensor_data)
+        return {
+            "temperature": data.get("temp"),
+            "humidity":    data.get("humi"),
+            "gas":         data.get("gas"),
+            "led":   0,
+            "fan":   0,
+            "door":  0,
+            "pump":  0,
+            "timestamp": datetime.now().strftime("%H:%M:%S"),
+        }

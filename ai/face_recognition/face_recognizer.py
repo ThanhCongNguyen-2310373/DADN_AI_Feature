@@ -23,6 +23,8 @@ from datetime import datetime
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 import config
 from core.mqtt_client import MQTTSingleton
+from core.telegram_notifier import TelegramNotifier
+from core.database import DatabaseSingleton
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +50,9 @@ class FaceRecognizer:
     def __init__(self):
         self._running = False
         self._thread: threading.Thread = None
-        self._mqtt = MQTTSingleton.get_instance()
+        self._mqtt     = MQTTSingleton.get_instance()
+        self._telegram = TelegramNotifier.get_instance()
+        self._db       = DatabaseSingleton.get_instance()
 
         # Load Haar Cascade detector
         self._face_cascade = cv2.CascadeClassifier(
@@ -60,6 +64,9 @@ class FaceRecognizer:
         self._label_map: dict = {}
         self._load_model()
 
+        # Tối ưu CPU: giới hạn số thread OpenCV sử dụng
+        cv2.setNumThreads(2)
+
         # Trạng thái theo dõi người lạ (REQ-09)
         self._stranger_first_seen: float = None  # Thời điểm phát hiện lần đầu
         self._stranger_alerted = False           # Đã gửi cảnh báo chưa?
@@ -67,6 +74,13 @@ class FaceRecognizer:
         # Trạng thái cửa (chống spam lệnh mở cửa)
         self._door_last_opened: float = 0
         self._door_cooldown = 10  # Giây giữa 2 lần mở cửa liên tiếp
+
+        # Tối ưu CPU: bỏ qua frame (chỉ xử lý 1 trong SKIP_N frame)
+        self._FRAME_SKIP = 2        # xử lý frame 0,2,4,… → ~5 FPS thực tế
+        self._frame_counter = 0
+
+        # Tham chiếu đến VideoCapture để WebApp dùng lại stream
+        self._cap: cv2.VideoCapture = None
 
     # ------------------------------------------------------------------
     # Load model
@@ -135,16 +149,19 @@ class FaceRecognizer:
           - Liên tục phân tích frame
           - Nhận diện khuôn mặt và xử lý logic cửa
         """
-        cap = cv2.VideoCapture(config.CAMERA_INDEX)
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH,  config.FACE_FRAME_WIDTH)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, config.FACE_FRAME_HEIGHT)
+        # ── Mở webcam với độ phân giải thấp để tiết kiệm CPU ──
+        self._cap = cv2.VideoCapture(config.CAMERA_INDEX)
+        self._cap.set(cv2.CAP_PROP_FRAME_WIDTH,  320)   # Giảm từ 640→320
+        self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)   # Giảm từ 480→240
+        self._cap.set(cv2.CAP_PROP_FPS, 15)             # Giới hạn FPS nguồn
 
+        cap = self._cap
         if not cap.isOpened():
             logger.error("[FaceAI] ❌ Không thể mở webcam!")
             self._running = False
             return
 
-        logger.info("[FaceAI] 📷 Webcam đã mở. Bắt đầu giám sát cửa...")
+        logger.info("[FaceAI] 📷 Webcam đã mở (320×240). Bắt đầu giám sát cửa...")
 
         while self._running:
             ret, frame = cap.read()
@@ -153,14 +170,25 @@ class FaceRecognizer:
                 time.sleep(0.1)
                 continue
 
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            # ── Frame-skip: chỉ xử lý nhận diện mỗi FRAME_SKIP frame ──
+            self._frame_counter += 1
+            if self._frame_counter % self._FRAME_SKIP != 0:
+                # Vẫn hiển thị frame (nếu có cửa sổ) nhưng không xử lý AI
+                time.sleep(0.05)
+                continue
 
-            # --- Phát hiện khuôn mặt ---
+            # ── Xử lý AI trên frame đã thu nhỏ ──
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            # Equalize histogram để cải thiện nhận diện trong điều kiện ánh sáng yếu
+            gray = cv2.equalizeHist(gray)
+
+            # --- Phát hiện khuôn mặt (minSize nhỏ hơn vì frame 320×240) ---
             faces = self._face_cascade.detectMultiScale(
                 gray,
                 scaleFactor=1.1,
-                minNeighbors=5,
-                minSize=(80, 80)
+                minNeighbors=4,
+                minSize=(50, 50),
+                flags=cv2.CASCADE_SCALE_IMAGE,
             )
 
             if len(faces) == 0:
@@ -169,14 +197,12 @@ class FaceRecognizer:
             else:
                 for (x, y, w, h) in faces:
                     face_roi = gray[y:y + h, x:x + w]
-                    face_roi = cv2.resize(face_roi, (160, 160))
+                    face_roi = cv2.resize(face_roi, (100, 100))  # Nhỏ hơn → nhanh hơn
 
                     # --- Nhận diện bằng LBPH ---
                     label_id, confidence = self._recognizer.predict(face_roi)
 
                     # LBPH: confidence THẤP hơn = GIỐNG hơn (0 = hoàn hảo)
-                    # Ngưỡng: confidence < threshold → nhận diện thành công
-                    # Chuyển đổi sang thang 0-1 để dễ đọc
                     similarity = max(0, 1 - (confidence / 100))
                     is_known = (similarity >= config.FACE_CONFIDENCE_THRESHOLD)
 
@@ -187,8 +213,8 @@ class FaceRecognizer:
                     cv2.rectangle(frame, (x, y), (x + w, y + h), color, 2)
                     label_text = f"{person_name} ({similarity:.0%})"
                     cv2.putText(frame, label_text,
-                                (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX,
-                                0.7, color, 2)
+                                (x, y - 8), cv2.FONT_HERSHEY_SIMPLEX,
+                                0.55, color, 1)
 
                     # --- Xử lý logic ---
                     if is_known:
@@ -196,17 +222,11 @@ class FaceRecognizer:
                     else:
                         self._handle_stranger(frame, x, y, w, h)
 
-            cv2.imshow("YoloHome - FaceAI Door Guard", frame)
-
-            # Nhấn Q để dừng (chỉ dùng khi debug)
-            if cv2.waitKey(1) & 0xFF == ord("q"):
-                break
-
-            # Giới hạn FPS (~10 FPS) để giảm tải CPU
-            time.sleep(0.1)
+            # ── Tăng sleep để giảm CPU usage (~5 FPS thực tế) ──
+            time.sleep(0.2)
 
         cap.release()
-        cv2.destroyAllWindows()
+        self._cap = None
         logger.info("[FaceAI] Webcam đã giải phóng.")
 
     # ------------------------------------------------------------------
@@ -241,7 +261,14 @@ class FaceRecognizer:
         self._mqtt.publish(config.FEED_LOG, log_message)
 
         # Lưu ảnh log khi mở cửa thành công
-        self._save_log_image(frame, f"open_{person_name}")
+        img_path = self._save_log_image(frame, f"open_{person_name}")
+
+        # Ghi vào DB
+        try:
+            self._db.insert_face_event("known", person=person_name,
+                                        confidence=similarity, img_path=img_path)
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     # Xử lý người lạ (REQ-09)
@@ -292,7 +319,17 @@ class FaceRecognizer:
         self._mqtt.publish(config.FEED_LOG,   alert_msg)
 
         # Lưu ảnh bằng chứng
-        self._save_log_image(frame, "stranger_alert")
+        img_path = self._save_log_image(frame, "stranger_alert")
+
+        # Gửi Telegram kèm ảnh
+        elapsed = time.time() - (self._stranger_first_seen or time.time())
+        self._telegram.stranger_alert(elapsed, img_path)
+
+        # Ghi vào DB
+        try:
+            self._db.insert_face_event("stranger", img_path=img_path)
+        except Exception:
+            pass
 
     def _reset_stranger_timer(self):
         """Reset bộ đếm theo dõi người lạ khi không còn khuôn mặt lạ."""
@@ -320,6 +357,7 @@ class FaceRecognizer:
 
         cv2.imwrite(img_path, frame)
         logger.debug(f"[FaceAI] 📸 Đã lưu ảnh log: {img_path}")
+        return img_path
 
     @property
     def is_running(self) -> bool:

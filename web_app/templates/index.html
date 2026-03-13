@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>YoloHome Dashboard</title>
+  <link rel="stylesheet" href="/static/css/style.css" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css"
+        crossorigin="anonymous" referrerpolicy="no-referrer" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <!-- ───────── HEADER ───────── -->
+  <header class="header">
+    <div class="header-left">
+      <i class="fas fa-house-signal"></i>
+      <span class="brand">YoloHome</span>
+    </div>
+    <div class="header-right">
+      <a href="/members" class="nav-link"><i class="fas fa-users"></i> Thành viên</a>
+      <span id="clock" class="clock">--:--:--</span>
+      <span id="conn-badge" class="badge badge-connecting">
+        <i class="fas fa-circle"></i> Đang kết nối…
+      </span>
+      <a href="/logout" class="nav-link" style="color:var(--text-dim)"><i class="fas fa-right-from-bracket"></i></a>
+    </div>
+  </header>
+
+  <!-- ───────── MAIN GRID ───────── -->
+  <main class="grid">
+
+    <!-- ── Hàng 1: Sensor Cards ── -->
+    <section class="card sensor-card" id="card-temp">
+      <div class="card-icon"><i class="fas fa-thermometer-half"></i></div>
+      <div class="card-body">
+        <p class="card-label">Nhiệt độ</p>
+        <p class="card-value" id="val-temp">--</p>
+        <p class="card-unit">°C</p>
+      </div>
+      <div class="card-bar-wrap"><div class="card-bar" id="bar-temp"></div></div>
+    </section>
+
+    <section class="card sensor-card" id="card-humi">
+      <div class="card-icon"><i class="fas fa-droplet"></i></div>
+      <div class="card-body">
+        <p class="card-label">Độ ẩm</p>
+        <p class="card-value" id="val-humi">--</p>
+        <p class="card-unit">%</p>
+      </div>
+      <div class="card-bar-wrap"><div class="card-bar" id="bar-humi"></div></div>
+    </section>
+
+    <section class="card sensor-card" id="card-gas">
+      <div class="card-icon"><i class="fas fa-wind"></i></div>
+      <div class="card-body">
+        <p class="card-label">Khí gas</p>
+        <p class="card-value" id="val-gas">--</p>
+        <p class="card-unit">ppm</p>
+      </div>
+      <div class="card-bar-wrap"><div class="card-bar" id="bar-gas"></div></div>
+    </section>
+
+    <!-- ── Hàng 2: Điều khiển thiết bị ── -->
+    <section class="card control-card">
+      <h2 class="card-title"><i class="fas fa-sliders"></i> Điều khiển</h2>
+      <div class="control-grid">
+
+        <div class="ctrl-item">
+          <label>Đèn LED</label>
+          <label class="toggle">
+            <input type="checkbox" id="sw-led" onchange="sendControl('led', this.checked?1:0)" />
+            <span class="slider"></span>
+          </label>
+          <span class="ctrl-state" id="st-led">Tắt</span>
+        </div>
+
+        <div class="ctrl-item">
+          <label>Quạt</label>
+          <label class="toggle">
+            <input type="checkbox" id="sw-fan" onchange="sendControl('fan', this.checked?1:0)" />
+            <span class="slider"></span>
+          </label>
+          <span class="ctrl-state" id="st-fan">Tắt</span>
+        </div>
+
+        <div class="ctrl-item">
+          <label>Cửa (Servo)</label>
+          <label class="toggle">
+            <input type="checkbox" id="sw-door" onchange="sendControl('door', this.checked?90:0)" />
+            <span class="slider"></span>
+          </label>
+          <span class="ctrl-state" id="st-door">Đóng</span>
+        </div>
+
+        <div class="ctrl-item">
+          <label>Máy bơm</label>
+          <label class="toggle">
+            <input type="checkbox" id="sw-pump" onchange="sendControl('pump', this.checked?1:0)" />
+            <span class="slider"></span>
+          </label>
+          <span class="ctrl-state" id="st-pump">Tắt</span>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ── Hàng 2: Camera FaceAI ── -->
+    <section class="card camera-card">
+      <h2 class="card-title"><i class="fas fa-camera"></i> Camera FaceAI</h2>
+      <div class="camera-wrap">
+        <img id="cam-feed" src="/video_feed" alt="Camera stream"
+             onerror="this.src='/static/img/no_camera.svg'" />
+      </div>
+      <div id="face-status" class="face-status">Chờ nhận diện…</div>
+    </section>
+
+    <!-- ── Hàng 3: Voice Chat ── -->
+    <section class="card chat-card">
+      <h2 class="card-title"><i class="fas fa-microphone"></i> Trợ lý giọng nói</h2>
+      <div id="chat-messages" class="chat-messages"></div>
+      <div class="chat-footer">
+        <span class="chat-hint">Nói "<strong>Yolo</strong>" để kích hoạt</span>
+        <span id="voice-indicator" class="voice-indicator">
+          <i class="fas fa-circle-dot"></i>
+        </span>
+      </div>
+    </section>
+
+    <!-- ── Hàng 3: Log nhận diện ── -->
+    <section class="card log-card">
+      <h2 class="card-title"><i class="fas fa-clock-rotate-left"></i> Log nhận diện</h2>
+      <div id="face-log-list" class="log-list"></div>
+    </section>
+
+    <!-- ── Hàng 4: Biểu đồ lịch sử cảm biến ── -->
+    <section class="card" style="grid-column:span 2">
+      <h2 class="card-title"><i class="fas fa-chart-line"></i> Biểu đồ 24 giờ (Nhiệt độ / Độ ẩm)</h2>
+      <canvas id="chart-sensor" height="80"></canvas>
+    </section>
+
+    <!-- ── Hàng 4: Báo cáo điện năng ── -->
+    <section class="card" style="grid-column:span 1">
+      <h2 class="card-title"><i class="fas fa-bolt"></i> Điện năng tiêu thụ (24h)</h2>
+      <div id="energy-report" class="energy-grid"></div>
+    </section>
+
+  </main>
+
+  <!-- ───────── FOOTER ───────── -->
+  <footer class="footer">
+    YoloHome · IoT+AI Gateway · 2025
+  </footer>
+
+  <script src="/static/js/dashboard.js"></script>
+</body>
+</html>

@@ -82,3 +82,31 @@ LOG_BACKUP_COUNT        = 3
 # GEMINI / RAG CONFIGURATION
 # ============================================================
 GEMINI_API_KEY          = os.getenv("GEMINI_API_KEY", "")
+
+# ============================================================
+# TELEGRAM BOT CONFIGURATION (REQ-03 / REQ-09 alerts)
+# ============================================================
+TELEGRAM_BOT_TOKEN      = os.getenv("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID        = os.getenv("TELEGRAM_CHAT_ID",   "")
+
+# ============================================================
+# WEB DASHBOARD AUTHENTICATION
+# ============================================================
+WEB_USERNAME            = os.getenv("WEB_USERNAME", "admin")
+WEB_PASSWORD            = os.getenv("WEB_PASSWORD", "yolohome2025")
+WEB_PORT                = int(os.getenv("WEB_PORT", "8000"))
+
+# ============================================================
+# DATABASE CONFIGURATION
+# ============================================================
+DATABASE_PATH           = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "data", "yolohome.db"
+)
+DB_KEEP_DAYS            = 7    # Giữ dữ liệu lịch sử 7 ngày
+
+# ============================================================
+# OPENWEATHERMAP CONFIGURATION (Phase 4)
+# ============================================================
+OPENWEATHER_API_KEY     = os.getenv("OPENWEATHER_API_KEY", "")
+OPENWEATHER_CITY        = os.getenv("OPENWEATHER_CITY", "Ho Chi Minh City")
+OPENWEATHER_UNITS       = "metric"   # Nhiệt độ °C, tốc độ gió m/s

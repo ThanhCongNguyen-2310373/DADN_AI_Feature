@@ -86,20 +86,23 @@ class YoloHomeGateway:
       - Xử lý graceful shutdown khi nhận tín hiệu Ctrl+C (SIGINT)
     """
 
-    def __init__(self, enable_face: bool = True, enable_voice: bool = True):
+    def __init__(self, enable_face: bool = True, enable_voice: bool = True, enable_web: bool = True):
         """
         Args:
             enable_face : Có bật module Face Recognition không
             enable_voice: Có bật module Voice Control không
+            enable_web  : Có bật Dashboard Web App không
         """
         self._logger = logging.getLogger(self.__class__.__name__)
         self._enable_face  = enable_face
         self._enable_voice = enable_voice
+        self._enable_web   = enable_web
         self._running = False
 
         self._sensor_reader   = None
         self._face_recognizer = None
         self._voice_assistant = None
+        self._web_thread: threading.Thread = None
 
         # Đăng ký xử lý tín hiệu Ctrl+C
         signal.signal(signal.SIGINT,  self._signal_handler)
@@ -176,7 +179,17 @@ class YoloHomeGateway:
         else:
             self._logger.info("[Gateway] ⏭️  VoiceAI đã bị tắt (--no-voice).")
 
-        # --- Bước 6: Báo cáo trạng thái ---
+        # --- Bước 6: Khởi động Web Dashboard ---
+        if self._enable_web:
+            self._logger.info("[Gateway] Khởi động Web Dashboard tại http://localhost:8000 ...")
+            try:
+                self._start_web_app()
+            except Exception as e:
+                self._logger.error(f"[Gateway] Lỗi khởi động WebApp: {e}")
+        else:
+            self._logger.info("[Gateway] ⏭️  Web Dashboard đã bị tắt (--no-web).")
+
+        # --- Bước 7: Báo cáo trạng thái ---
         self._print_status()
 
         # --- Giữ main thread sống, in heartbeat mỗi 30 giây ---
@@ -218,8 +231,39 @@ class YoloHomeGateway:
         if self._sensor_reader:
             data = self._sensor_reader.get_latest_data()
             self._logger.info(
-                f"[Heartbeat] Cảm biến: T={data['temp']}°C | H={data['humi']}% | Gas={data['gas']}ppm"
+                f"[Heartbeat] Cảm biến: T={data['temperature']}°C | H={data['humidity']}% | Gas={data['gas']}ppm"
             )
+
+    def _start_web_app(self):
+        """
+        Khởi động FastAPI Web App trong thread riêng.
+        Inject các module runtime vào WebApp trước khi chạy.
+        """
+        import uvicorn
+        from web_app.app import app as fastapi_app, inject_modules
+
+        # Inject các module để WebApp có thể đọc dữ liệu thực tế
+        inject_modules(
+            sensor_reader   = self._sensor_reader,
+            voice_assistant = self._voice_assistant,
+            face_recognizer = self._face_recognizer,
+        )
+
+        def _run():
+            uvicorn.run(
+                fastapi_app,
+                host="0.0.0.0",
+                port=8000,
+                log_level="warning",  # Im lặng hơn để không spam console
+            )
+
+        self._web_thread = threading.Thread(
+            target=_run,
+            daemon=True,
+            name="WebApp-Thread",
+        )
+        self._web_thread.start()
+        self._logger.info("[Gateway] 🌐 Web Dashboard: http://localhost:8000")
 
     def _print_status(self):
         """In bảng trạng thái khởi động."""
@@ -232,7 +276,8 @@ class YoloHomeGateway:
         print(f"  🌡️  Ngưỡng nhiệt độ: {config.TEMP_THRESHOLD}°C")
         print(f"  💨 Ngưỡng khí gas : {config.GAS_THRESHOLD} ppm")
         print(f"  📷 FaceAI       : {'✅ Bật' if self._enable_face  else '❌ Tắt'}")
-        print(f"  🎙️  VoiceAI      : {'✅ Bật' if self._enable_voice else '❌ Tắt'}")
+        print(f"  🎤 VoiceAI      : {'✅ Bật' if self._enable_voice else '❌ Tắt'}")
+        print(f"  🌐 Web Dashboard: {'✅ http://localhost:8000' if self._enable_web else '❌ Tắt'}")
         print("=" * 60 + "\n")
 
     # ------------------------------------------------------------------
@@ -279,6 +324,11 @@ def parse_args():
         help="Tắt module Voice Control (dùng khi không có microphone)"
     )
     parser.add_argument(
+        "--no-web",
+        action="store_true",
+        help="Tắt Web Dashboard (mặc định: bật tại http://localhost:8000)"
+    )
+    parser.add_argument(
         "--sim",
         action="store_true",
         help="Chế độ simulation: giả lập cảm biến, không cần Yolo:Bit"
@@ -299,6 +349,7 @@ if __name__ == "__main__":
     # 3. Khởi động Gateway
     gateway = YoloHomeGateway(
         enable_face  = not args.no_face,
-        enable_voice = not args.no_voice
+        enable_voice = not args.no_voice,
+        enable_web   = not args.no_web,
     )
     gateway.start()

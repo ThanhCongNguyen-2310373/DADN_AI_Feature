@@ -1,0 +1,79 @@
+# YoloHome - Knowledge Base cho RAG Assistant
+# Tài liệu tham khảo cho Gemini RAG khi trả lời câu hỏi tư vấn
+# Mỗi đoạn cách nhau bằng dòng trống để dễ chunking
+
+=== NGƯỠNG AN TOÀN MÔI TRƯỜNG ===
+
+Nhiệt độ an toàn trong nhà nằm trong khoảng từ 20°C đến 28°C. Khi nhiệt độ vượt quá 30°C, môi trường bắt đầu gây khó chịu. Nhiệt độ trên 35°C được coi là nóng nguy hiểm, có thể gây say nắng, đặc biệt nguy hiểm với trẻ em và người cao tuổi. Hệ thống YoloHome sẽ tự động bật quạt làm mát khi nhiệt độ vượt ngưỡng 35°C.
+
+Độ ẩm lý tưởng trong nhà nằm trong khoảng 40% đến 60%. Độ ẩm dưới 30% gây khô da, kích ứng đường hô hấp và tĩnh điện. Độ ẩm trên 70% tạo điều kiện cho nấm mốc phát triển, gây hại sức khỏe và hư hại đồ đạc. Cần bật máy hút ẩm hoặc thông gió khi độ ẩm vượt 70%.
+
+Nồng độ khí gas (LPG/Butan/Propan) ngưỡng an toàn:
+- Dưới 100 ppm: Môi trường bình thường, an toàn.
+- 100 - 300 ppm: Ngưỡng chú ý, cần kiểm tra nguồn khí.
+- Trên 300 ppm: NGUY HIỂM. Có rò rỉ khí gas, cần xử lý khẩn cấp ngay.
+- Trên 1000 ppm: CỰC KỲ NGUY HIỂM. Nguy cơ cháy nổ rất cao, phải sơ tán ngay.
+
+Hệ thống YoloHome tự động gửi cảnh báo và thông báo đến chủ nhà khi nồng độ khí gas vượt 300 ppm.
+
+=== XỬ LÝ KHI RÒ RỈ KHÍ GAS ===
+
+Khi hệ thống cảnh báo phát hiện khí gas (trên 300 ppm), cần thực hiện ngay các bước sau:
+
+Bước 1 - Không bật bất kỳ thiết bị điện nào. Tia lửa điện từ công tắc, ổ cắm hoặc điện thoại có thể gây cháy nổ. Không bật đèn, quạt hay bất kỳ thiết bị nào.
+
+Bước 2 - Tắt van khí gas ngay lập tức. Tìm van chính của bình gas hoặc đường ống dẫn gas và khóa lại hoàn toàn.
+
+Bước 3 - Mở cửa sổ và cửa ra vào để thông gió. Khí gas nhẹ hơn không khí sẽ thoát ra ngoài nếu thông gió tốt.
+
+Bước 4 - Sơ tán mọi người ra khỏi phòng hoặc ngôi nhà, đặc biệt trẻ em và người cao tuổi.
+
+Bước 5 - Gọi điện báo cho cứu hỏa (114) hoặc dịch vụ khí gas khẩn cấp từ bên ngoài nhà, tuyệt đối không gọi từ bên trong.
+
+Bước 6 - Chỉ quay lại nhà khi nhân viên kỹ thuật xác nhận đã an toàn và nồng độ khí gas đã về mức bình thường.
+
+Nguyên nhân phổ biến gây rò rỉ khí gas: van bình gas không đóng kín, ống dẫn gas bị nứt hoặc lão hóa, đầu nối bị lỏng, thiết bị bếp gas bị hỏng. Nên kiểm tra định kỳ mỗi 6 tháng.
+
+=== TIẾT KIỆM ĐIỆN CHO NHÀ THÔNG MINH ===
+
+Chiếu sáng thông minh: Sử dụng đèn LED thay bóng sợi đốt có thể tiết kiệm 70-80% điện năng chiếu sáng. Cài lịch tự động tắt đèn khi ra khỏi nhà. Dùng cảm biến chuyển động để đèn chỉ bật khi có người.
+
+Quạt và điều hòa: Tắt quạt khi không có người trong phòng. Kết hợp quạt với điều hòa ở nhiệt độ 26-28°C thay vì để điều hòa ở 20°C tiết kiệm đến 30% điện điều hòa. Vệ sinh bộ lọc điều hòa định kỳ mỗi 3 tháng giúp máy hoạt động hiệu quả hơn.
+
+Máy bơm nước: Chỉ bật máy bơm khi thực sự cần thiết. Đặt lịch tưới cây vào sáng sớm hoặc tối để giảm bay hơi, tiết kiệm nước và điện. Kiểm tra rò rỉ đường ống định kỳ.
+
+Thiết bị chờ (Standby power): Các thiết bị điện ở chế độ chờ vẫn tiêu thụ 5-10W. Rút phích cắm hoặc dùng ổ cắm có công tắc để tắt hoàn toàn khi không dùng. Trong một gia đình trung bình, điện standby chiếm 5-10% hóa đơn điện hàng tháng.
+
+Khung giờ điện thấp điểm: Tại Việt Nam, giờ thấp điểm (22h - 6h sáng) có giá điện rẻ hơn. Lên lịch chạy máy giặt, máy rửa chén hoặc bơm nước vào khung giờ này để tiết kiệm chi phí.
+
+Hệ thống YoloHome có thể cài lịch tự động: tắt đèn và quạt sau 23h, bật máy bơm tưới cây lúc 6h sáng, gửi cảnh báo nếu điện năng tiêu thụ bất thường.
+
+=== ĐIỀU KHIỂN THIẾT BỊ BẰNG GIỌNG NÓI ===
+
+Các lệnh giọng nói được hỗ trợ trong hệ thống YoloHome:
+- "Yolo ơi, bật đèn" hoặc "mở đèn" → Bật đèn phòng khách
+- "Yolo ơi, tắt đèn" hoặc "đóng đèn" → Tắt đèn
+- "Yolo ơi, bật quạt" → Bật quạt
+- "Yolo ơi, tắt quạt" → Tắt quạt
+- "Yolo ơi, bật máy bơm" hoặc "tưới cây" → Bật máy bơm tưới
+- "Yolo ơi, tắt máy bơm" → Tắt máy bơm
+- "Yolo ơi, mở cửa" → Mở khóa cửa (cần xác thực khuôn mặt)
+- "Yolo ơi, đóng cửa" → Khóa cửa lại
+
+Nếu lệnh không được nhận diện, hệ thống sẽ phản hồi "Xin lỗi, tôi chưa nghe rõ. Bạn có thể nhắc lại không?" và chờ lệnh tiếp theo.
+
+=== NHẬN DIỆN KHUÔN MẶT ===
+
+Hệ thống FaceAI của YoloHome sử dụng thuật toán LBPH (Local Binary Patterns Histogram) hoạt động hoàn toàn trên thiết bị (edge processing), không cần kết nối internet để mở cửa.
+
+Để đăng ký khuôn mặt mới, cần chạy công cụ face_register và chụp ít nhất 30-50 ảnh trong điều kiện ánh sáng khác nhau để đạt độ chính xác cao. Hệ thống đạt độ chính xác trên 90% trong điều kiện ánh sáng chuẩn.
+
+Nếu khuôn mặt không được nhận diện sau 3 lần thử, hệ thống sẽ không mở cửa và ghi log sự kiện. Nếu phát hiện khuôn mặt lạ liên tục trong 10 giây, hệ thống sẽ gửi cảnh báo khẩn cấp đến chủ nhà.
+
+=== THÔNG TIN HỆ THỐNG YOLOHOME ===
+
+YoloHome là hệ thống nhà thông minh sử dụng mạch Yolo:Bit (ESP32) làm thiết bị thu thập dữ liệu, kết nối qua Serial USB đến Gateway Python chạy trên máy tính. Gateway xử lý AI và kết nối cloud qua giao thức MQTT đến nền tảng Adafruit IO.
+
+Các cảm biến được hỗ trợ: DHT20 (nhiệt độ, độ ẩm), MQ-2/MQ-9 (khí gas). Thiết bị điều khiển: đèn LED, quạt, máy bơm nước, khóa cửa servo.
+
+Hệ thống hoạt động 24/7, tự động gửi dữ liệu mỗi 5 giây và có cơ chế tự kết nối lại khi mất mạng.

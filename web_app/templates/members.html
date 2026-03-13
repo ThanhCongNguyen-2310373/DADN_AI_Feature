@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>YoloHome – Quản lý thành viên</title>
+  <link rel="stylesheet" href="/static/css/style.css" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css"
+        crossorigin="anonymous" />
+</head>
+<body>
+  <header class="header">
+    <div class="header-left">
+      <i class="fas fa-house-signal"></i>
+      <span class="brand">YoloHome</span>
+      <span style="color:var(--text-dim);margin:0 8px">/</span>
+      <span style="color:var(--text-dim)">Quản lý thành viên</span>
+    </div>
+    <div class="header-right">
+      <a href="/" style="color:var(--accent);text-decoration:none;font-size:.9rem">
+        <i class="fas fa-gauge-high"></i> Dashboard
+      </a>
+      <a href="/logout" style="color:var(--text-dim);text-decoration:none;font-size:.9rem">
+        <i class="fas fa-right-from-bracket"></i> Đăng xuất
+      </a>
+    </div>
+  </header>
+
+  <main style="padding:24px;max-width:900px;margin:0 auto">
+
+    <!-- ── Thêm thành viên mới ── -->
+    <section class="card" style="margin-bottom:20px">
+      <h2 class="card-title"><i class="fas fa-user-plus"></i> Đăng ký khuôn mặt mới</h2>
+      <p style="font-size:.85rem;color:var(--text-dim);margin-bottom:16px">
+        Camera sẽ tự động chụp ảnh khi phát hiện khuôn mặt. Đảm bảo đứng trước webcam khi nhấn bắt đầu.
+      </p>
+      <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">
+        <div style="display:flex;flex-direction:column;gap:6px;flex:1;min-width:180px">
+          <label style="font-size:.82rem;color:var(--text-dim)">Tên thành viên</label>
+          <input id="inp-name" type="text" placeholder="VD: Cong, BaMe..."
+                 style="background:var(--surface2);border:1px solid #30363d;border-radius:8px;
+                        padding:10px 14px;color:var(--text);font-size:.95rem;outline:none" />
+        </div>
+        <div style="display:flex;flex-direction:column;gap:6px">
+          <label style="font-size:.82rem;color:var(--text-dim)">Số ảnh</label>
+          <input id="inp-samples" type="number" value="30" min="10" max="80"
+                 style="background:var(--surface2);border:1px solid #30363d;border-radius:8px;
+                        padding:10px 14px;color:var(--text);font-size:.95rem;width:90px;outline:none" />
+        </div>
+        <button onclick="startEnroll()" id="btn-enroll"
+                style="background:var(--accent);color:#0d1117;border:none;border-radius:8px;
+                       padding:10px 20px;font-weight:600;cursor:pointer;white-space:nowrap">
+          <i class="fas fa-camera"></i> Bắt đầu chụp
+        </button>
+        <button onclick="trainModel()" id="btn-train"
+                style="background:var(--accent2);color:#0d1117;border:none;border-radius:8px;
+                       padding:10px 20px;font-weight:600;cursor:pointer;white-space:nowrap">
+          <i class="fas fa-brain"></i> Train model
+        </button>
+      </div>
+      <div id="enroll-status" style="margin-top:12px;font-size:.85rem;color:var(--text-dim)"></div>
+    </section>
+
+    <!-- ── Camera preview ── -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
+      <section class="card">
+        <h2 class="card-title"><i class="fas fa-camera"></i> Camera Preview</h2>
+        <div style="background:#000;border-radius:8px;overflow:hidden;aspect-ratio:4/3">
+          <img src="/video_feed" style="width:100%;height:100%;object-fit:cover" alt="camera" />
+        </div>
+      </section>
+
+      <!-- ── Danh sách thành viên ── -->
+      <section class="card">
+        <h2 class="card-title"><i class="fas fa-users"></i> Thành viên đã đăng ký</h2>
+        <div id="members-list" style="display:flex;flex-direction:column;gap:8px"></div>
+      </section>
+    </div>
+
+  </main>
+
+  <script>
+    async function loadMembers() {
+      try {
+        const resp = await fetch('/api/face/members');
+        const data = await resp.json();
+        const list = document.getElementById('members-list');
+        if (!data.members || data.members.length === 0) {
+          list.innerHTML = '<p style="color:var(--text-dim);font-size:.85rem">Chưa có thành viên nào.</p>';
+          return;
+        }
+        list.innerHTML = data.members.map(m => `
+          <div style="display:flex;align-items:center;justify-content:space-between;
+                      background:var(--surface2);border-radius:8px;padding:10px 14px">
+            <div>
+              <i class="fas fa-user-circle" style="color:var(--accent)"></i>
+              <strong style="margin-left:8px">${m.name}</strong>
+            </div>
+            <span style="font-size:.78rem;color:var(--text-dim)">${m.samples} ảnh</span>
+          </div>`).join('');
+      } catch(e) { console.error(e); }
+    }
+
+    async function startEnroll() {
+      const name    = document.getElementById('inp-name').value.trim();
+      const samples = parseInt(document.getElementById('inp-samples').value) || 30;
+      const statusEl = document.getElementById('enroll-status');
+
+      if (!name) { statusEl.textContent = '⚠️ Hãy nhập tên thành viên.'; return; }
+
+      document.getElementById('btn-enroll').disabled = true;
+      statusEl.innerHTML = `<i class="fas fa-spinner fa-spin"></i> Đang chụp ${samples} ảnh cho <strong>${name}</strong>...`;
+
+      try {
+        const resp = await fetch('/api/face/enroll', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ person_name: name, num_samples: samples }),
+        });
+        const data = await resp.json();
+        if (resp.ok) {
+          statusEl.innerHTML = `✅ Đang chụp ảnh trong nền. Khi xong, nhấn <strong>Train model</strong>.`;
+          // Cập nhật danh sách sau 5 giây
+          setTimeout(loadMembers, 5000);
+        } else {
+          statusEl.textContent = `❌ Lỗi: ${data.detail}`;
+        }
+      } catch(e) {
+        statusEl.textContent = `❌ Lỗi kết nối: ${e}`;
+      }
+      setTimeout(() => { document.getElementById('btn-enroll').disabled = false; }, 3000);
+    }
+
+    async function trainModel() {
+      const statusEl = document.getElementById('enroll-status');
+      document.getElementById('btn-train').disabled = true;
+      statusEl.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Đang train lại LBPH model...';
+
+      try {
+        const resp = await fetch('/api/face/train', { method: 'POST' });
+        const data = await resp.json();
+        statusEl.textContent = data.status === 'training_started'
+          ? '✅ Model đang được train trong nền. Hệ thống sẽ tự động reload.'
+          : `❌ Lỗi: ${JSON.stringify(data)}`;
+      } catch(e) {
+        statusEl.textContent = `❌ Lỗi: ${e}`;
+      }
+      setTimeout(() => { document.getElementById('btn-train').disabled = false; }, 5000);
+    }
+
+    loadMembers();
+  </script>
+</body>
+</html>
