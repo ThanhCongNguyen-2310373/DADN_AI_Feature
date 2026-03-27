@@ -200,7 +200,7 @@ class VoiceAssistant:
                     # Kiểm tra có chứa wake word không
                     if config.WAKE_WORD.lower() in text:
                         logger.info(f"[Voice] 🔔 Wake word phát hiện! Đang lắng nghe lệnh...")
-                        self._speak("Vâng, tôi nghe. Bạn muốn làm gì?")
+                        self._speak("Vâng, tôi nghe. Bạn muốn làm gì?", wait=True)
 
                         # Ghi âm câu lệnh thực sự
                         command_audio = self._recognizer.listen(
@@ -209,12 +209,12 @@ class VoiceAssistant:
                             phrase_time_limit=config.VOICE_PHRASE_LIMIT
                         )
                         command_text = self._speech_to_text(command_audio)
-
+                    
                         if command_text:
                             logger.info(f"[Voice] 📝 Lệnh nhận được: '{command_text}'")
                             self._process_command(command_text)
                         else:
-                            self._speak("Xin lỗi, tôi chưa nghe rõ. Bạn có thể nhắc lại không?")
+                            self._speak("Xin lỗi, tôi chưa nghe rõ. Bạn có thể nhắc lại không?", wait=True)
 
                 except self._sr.WaitTimeoutError:
                     # Timeout bình thường khi không có âm thanh - không phải lỗi
@@ -459,7 +459,7 @@ class VoiceAssistant:
     # ------------------------------------------------------------------
     # Text-to-Speech
     # ------------------------------------------------------------------
-    def _speak(self, text: str):
+    def _speak(self, text: str, wait: bool = False):
         """
         Phát âm thanh phản hồi bằng gTTS.
         Chạy trong thread riêng để không block vòng lắng nghe.
@@ -489,13 +489,19 @@ class VoiceAssistant:
                 while self._pygame.mixer.music.get_busy():
                     time.sleep(0.1)
 
+                self._pygame.mixer.music.stop()
+                self._pygame.mixer.music.unload()
+
                 os.remove(tmp_path)  # Dọn file tạm
             except Exception as e:
                 logger.error(f"[Voice] Lỗi TTS: {e}")
 
-        # Chạy TTS trong thread riêng để không block luồng lắng nghe
-        tts_thread = threading.Thread(target=tts_task, daemon=True, name="TTS-Thread")
-        tts_thread.start()
+        # 2. Xử lý đồng bộ hoặc chạy ngầm tùy theo tham số wait
+        if wait:
+            tts_task()  # Đợi nói xong mới làm việc khác
+        else:
+            tts_thread = threading.Thread(target=tts_task, daemon=True, name="TTS-Thread")
+            tts_thread.start()
 
 
 # =====================================================================
