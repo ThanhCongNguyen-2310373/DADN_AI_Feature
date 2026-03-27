@@ -317,7 +317,7 @@ def _get_face_log() -> List[Dict]:
 async def login_page(request: Request):
     if _valid_session(request):
         return RedirectResponse("/")
-    return templates.TemplateResponse("login.html", {"request": request, "error": ""})
+    return templates.TemplateResponse(request=request, name="login.html", context={"error": ""})
 
 
 @app.post("/login", tags=["Security"],
@@ -365,7 +365,7 @@ async def logout(request: Request):
          summary="Dashboard chính", include_in_schema=False)
 async def index(request: Request, _=Depends(require_auth)):
     """Trang dashboard chính."""
-    return templates.TemplateResponse("index.html", {"request": request})
+    return templates.TemplateResponse(request=request, name="index.html", context={"request": request})
 
 
 # ── Members (Face Enrollment) ──

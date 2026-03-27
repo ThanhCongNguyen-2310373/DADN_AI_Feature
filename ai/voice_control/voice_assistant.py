@@ -534,6 +534,8 @@ class GeminiRAGAssistant:
         Khởi tạo RAG pipeline với LangChain + Gemini + FAISS.
         Đọc knowledge_base.txt cùng thư mục, tạo FAISS index để tra cứu nhanh.
         """
+        import asyncio
+        asyncio.set_event_loop(asyncio.new_event_loop())
         try:
             from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
             from langchain.chains import RetrievalQA
@@ -544,19 +546,22 @@ class GeminiRAGAssistant:
 
             # Cấu hình API key
             genai.configure(api_key=self._api_key)
+            
+            # --- THÊM DÒNG NÀY VÀO ĐỂ FIX LỖI SECRETSTR ---
+            os.environ["GOOGLE_API_KEY"] = self._api_key
 
             # Khởi tạo Gemini LLM (gemini-2.5-flash: nhanh hơn, miễn phí)
             llm = ChatGoogleGenerativeAI(
                 model="gemini-2.5-flash",
-                google_api_key=self._api_key,
+                # google_api_key=self._api_key,
                 temperature=0.3,
                 convert_system_message_to_human=True
             )
 
             # Khởi tạo Google Embeddings
             embeddings = GoogleGenerativeAIEmbeddings(
-                model="models/embedding-001",
-                google_api_key=self._api_key
+                model="models/gemini-embedding-001",
+                # google_api_key=self._api_key
             )
 
             # Đường dẫn đến knowledge_base.txt
