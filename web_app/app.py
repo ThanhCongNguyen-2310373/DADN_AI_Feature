@@ -537,12 +537,11 @@ async def control_device(cmd: ControlCommand, request: Request, _=Depends(requir
     )
 
     feed_map = {
-        "led":  f"{ADAFRUIT_USERNAME}/feeds/{FEED_LED}",
-        "fan":  f"{ADAFRUIT_USERNAME}/feeds/{FEED_FAN}",
-        "door": f"{ADAFRUIT_USERNAME}/feeds/{FEED_DOOR}",
-        "pump": f"{ADAFRUIT_USERNAME}/feeds/{FEED_PUMP}",
+        "led":  FEED_LED,
+        "fan":  FEED_FAN,
+        "door": FEED_DOOR,
+        "pump": FEED_PUMP,
     }
-
     device = cmd.device.lower()
     if device not in feed_map:
         raise HTTPException(status_code=400, detail=f"Unknown device: {device}")

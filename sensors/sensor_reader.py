@@ -18,6 +18,8 @@ import threading
 import logging
 from datetime import datetime
 
+import requests
+
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config
 from core.mqtt_client import MQTTSingleton
@@ -57,6 +59,14 @@ class SensorReader:
             "humi": None,   # Độ ẩm (%)
             "gas":  None,   # Nồng độ khí gas (ppm)
         }
+
+        self._device_state = {
+            "led": 0,
+            "fan": 0,
+            "pump": 0
+        }
+        # Khởi tạo trạng thái ban đầu từ Adafruit
+        self._sync_state_from_cloud()
 
         # Trạng thái ngưỡng (tránh spam cảnh báo liên tục)
         self._alert_cooldown = {}   # {alert_type: last_alert_time}
@@ -255,6 +265,9 @@ class SensorReader:
         value = 1 if payload.upper() in ("ON", "1") else 0
         logger.info(f"[Sensor] 💡 Lệnh đèn: {'BẬT' if value else 'TắT'}")
         self._serial.send_command("led", value)
+
+        with self._data_lock:
+            self._device_state["led"] = value
         try:
             self._db.insert_device_event("led", value, source="mqtt")
         except Exception:
@@ -274,6 +287,9 @@ class SensorReader:
         value = 1 if payload.upper() in ("ON", "1") else 0
         logger.info(f"[Sensor] 🌀 Lệnh quạt: {'BẬT' if value else 'TắT'}")
         self._serial.send_command("fan", value)
+        
+        with self._data_lock:
+            self._device_state["fan"] = value
         try:
             self._db.insert_device_event("fan", value, source="mqtt")
         except Exception:
@@ -293,6 +309,9 @@ class SensorReader:
         value = 1 if payload.upper() in ("ON", "1") else 0
         logger.info(f"[Sensor] 💧 Lệnh máy bơm: {'BẬT' if value else 'TắT'}")
         self._serial.send_command("pump", value)
+
+        with self._data_lock:
+            self._device_state["pump"] = value
         try:
             self._db.insert_device_event("pump", value, source="mqtt")
         except Exception:
@@ -313,14 +332,48 @@ class SensorReader:
             Dict {"temperature", "humidity", "gas", "led", "fan", "door", "pump", "timestamp"}
         """
         with self._data_lock:
-            data = dict(self._sensor_data)
+            # Tạo bản sao (copy) của dictionary để tránh lỗi đụng độ dữ liệu
+            # nếu có luồng khác đang ghi đè vào cùng lúc.
+            sensor_data = dict(self._sensor_data)
+            device_state = dict(self._device_state)
+
         return {
-            "temperature": data.get("temp"),
-            "humidity":    data.get("humi"),
-            "gas":         data.get("gas"),
-            "led":   0,
-            "fan":   0,
-            "door":  0,
-            "pump":  0,
-            "timestamp": datetime.now().strftime("%H:%M:%S"),
+            "temperature": sensor_data.get("temp"),
+            "humidity":    sensor_data.get("humi"),
+            "gas":         sensor_data.get("gas"),
+            "led":         device_state.get("led", 0),
+            "fan":         device_state.get("fan", 0),
+            "pump":        device_state.get("pump", 0),
+            "door":        0,  # Nếu hệ thống có thêm cửa, bạn có thể bổ sung sau
+            "timestamp":   datetime.now().strftime("%H:%M:%S"),
         }
+
+    def _sync_state_from_cloud(self):
+        """Lấy trạng thái cuối cùng từ Adafruit 1 lần duy nhất khi khởi động"""
+        logger.info("[Sensor] Đang đồng bộ trạng thái thiết bị từ Adafruit...")
+        
+        headers = {"X-AIO-Key": config.ADAFRUIT_AIO_KEY}
+        base_url = f"https://io.adafruit.com/api/v2/{config.ADAFRUIT_USERNAME}/feeds"
+        
+        try:
+            # 1. Đồng bộ đèn LED
+            res_led = requests.get(f"{base_url}/{config.FEED_LED}/data/last", headers=headers, timeout=5)
+            if res_led.status_code == 200:
+                val = res_led.json().get("value", "0")
+                self._device_state["led"] = 1 if str(val).upper() in ("1", "ON") else 0
+
+            # 2. Đồng bộ Quạt (FAN)
+            res_fan = requests.get(f"{base_url}/{config.FEED_FAN}/data/last", headers=headers, timeout=5)
+            if res_fan.status_code == 200:
+                val = res_fan.json().get("value", "0")
+                self._device_state["fan"] = 1 if str(val).upper() in ("1", "ON") else 0
+
+            # 3. Đồng bộ Máy bơm (PUMP)
+            res_pump = requests.get(f"{base_url}/{config.FEED_PUMP}/data/last", headers=headers, timeout=5)
+            if res_pump.status_code == 200:
+                val = res_pump.json().get("value", "0")
+                self._device_state["pump"] = 1 if str(val).upper() in ("1", "ON") else 0
+            
+            logger.info(f"[Sensor] Đã đồng bộ xong. Trạng thái: {self._device_state}")
+        except Exception as e:
+            logger.warning(f"[Sensor] Không thể đồng bộ từ cloud (có thể rớt mạng), dùng giá trị mặc định: {e}")
