@@ -317,7 +317,7 @@ def _get_face_log() -> List[Dict]:
 async def login_page(request: Request):
     if _valid_session(request):
         return RedirectResponse("/")
-    return templates.TemplateResponse("login.html", {"request": request, "error": ""})
+    return templates.TemplateResponse(request=request, name="login.html", context={"error": ""})
 
 
 @app.post("/login", tags=["Security"],
@@ -365,7 +365,7 @@ async def logout(request: Request):
          summary="Dashboard chính", include_in_schema=False)
 async def index(request: Request, _=Depends(require_auth)):
     """Trang dashboard chính."""
-    return templates.TemplateResponse("index.html", {"request": request})
+    return templates.TemplateResponse(request=request, name="index.html", context={"request": request})
 
 
 # ── Members (Face Enrollment) ──
@@ -537,12 +537,11 @@ async def control_device(cmd: ControlCommand, request: Request, _=Depends(requir
     )
 
     feed_map = {
-        "led":  f"{ADAFRUIT_USERNAME}/feeds/{FEED_LED}",
-        "fan":  f"{ADAFRUIT_USERNAME}/feeds/{FEED_FAN}",
-        "door": f"{ADAFRUIT_USERNAME}/feeds/{FEED_DOOR}",
-        "pump": f"{ADAFRUIT_USERNAME}/feeds/{FEED_PUMP}",
+        "led":  FEED_LED,
+        "fan":  FEED_FAN,
+        "door": FEED_DOOR,
+        "pump": FEED_PUMP,
     }
-
     device = cmd.device.lower()
     if device not in feed_map:
         raise HTTPException(status_code=400, detail=f"Unknown device: {device}")

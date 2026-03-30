@@ -16,6 +16,9 @@ logs/*.log
 logs/*.log.*
 logs/face_events/
 
+# --- Runtime data ---
+data/yolohome.db
+
 # --- Python cache ---
 __pycache__/
 *.py[cod]
