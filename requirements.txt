@@ -3,7 +3,7 @@
 # ============================================================
 
 # --- IoT / MQTT ---
-Adafruit-IO==2.7.2          # Adafruit IO MQTT client
+Adafruit-IO==2.8.2          # Adafruit IO MQTT client (fix build issue on CI/Python 3.13)
 pyserial==3.5               # Giao tiếp Serial với Yolo:Bit
 
 # --- Computer Vision (Face Recognition) ---

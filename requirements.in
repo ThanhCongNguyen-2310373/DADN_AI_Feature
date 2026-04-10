@@ -1,5 +1,5 @@
 # Top-level dependencies (Phase 5 strategy)
-Adafruit-IO
+Adafruit-IO==2.8.2
 pyserial
 opencv-python
 opencv-contrib-python
