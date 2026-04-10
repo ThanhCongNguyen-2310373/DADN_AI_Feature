@@ -1,8 +1,15 @@
 import importlib
+import sys
 import uuid
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+
+
+TESTS_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = TESTS_DIR.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 
 def _bootstrap_app(tmp_path: Path):
