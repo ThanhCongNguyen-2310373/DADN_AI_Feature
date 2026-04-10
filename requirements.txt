@@ -39,9 +39,9 @@ redis==5.2.1                # Persistent rate limiting backend
 
 # --- Phase 5: Observability ---
 prometheus-client==0.22.0   # Metrics export (/metrics)
-opentelemetry-api==1.28.2
-opentelemetry-sdk==1.28.2
-opentelemetry-exporter-otlp==1.28.2
+opentelemetry-api==1.24.0
+opentelemetry-sdk==1.24.0
+opentelemetry-exporter-otlp==1.24.0
 
 # --- Testing ---
 pytest==8.3.3

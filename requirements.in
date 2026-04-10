@@ -24,9 +24,9 @@ python-dotenv
 psycopg2-binary
 redis
 prometheus-client
-opentelemetry-api
-opentelemetry-sdk
-opentelemetry-exporter-otlp
+opentelemetry-api==1.24.0
+opentelemetry-sdk==1.24.0
+opentelemetry-exporter-otlp==1.24.0
 
 # Testing
 pytest
