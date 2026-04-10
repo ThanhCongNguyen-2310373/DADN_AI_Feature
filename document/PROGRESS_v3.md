@@ -113,8 +113,8 @@ GET /api/energy?hours=24    → báo cáo năng lượng
 
 #### Cấu hình (`.env`)
 ```
-TELEGRAM_BOT_TOKEN=7954908785:AAEg-PADmResbfKaRhX2wcnBtN-niTPtKC4
-TELEGRAM_CHAT_ID=6190195686
+TELEGRAM_BOT_TOKEN=
+TELEGRAM_CHAT_ID=
 ```
 
 **Implementation:** Dùng `requests` HTTP thuần (không phụ thuộc `python-telegram-bot`) – tránh conflict asyncio với Python 3.13.
