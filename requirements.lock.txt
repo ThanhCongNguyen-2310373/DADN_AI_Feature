@@ -1,0 +1,4 @@
+# Phase 5 lock file (generated baseline)
+# In CI/release: install with `pip install -r requirements.lock.txt`
+# Refresh lock: scripts/lock_dependencies.ps1
+-r requirements.txt

@@ -30,6 +30,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BASE_DIR)
 
 import config
+from core.observability import configure_structured_logging
 
 # =====================================================================
 # Thiết lập logging cho toàn hệ thống
@@ -69,6 +70,9 @@ def setup_logging():
 
     root_logger.addHandler(file_handler)
     root_logger.addHandler(console_handler)
+
+    # Phase 5: bật JSON structured logs nếu LOG_STRUCTURED=1
+    configure_structured_logging(root_logger)
 
     return logging.getLogger(__name__)
 

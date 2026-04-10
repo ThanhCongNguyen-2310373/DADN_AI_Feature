@@ -33,6 +33,20 @@ python-multipart==0.0.22    # Form data (face enrollment upload)
 # --- Notifications ---
 requests==2.32.5            # HTTP client cho Telegram Bot API
 
+# --- Phase 5: DB server + cache ---
+psycopg2-binary==2.9.10     # PostgreSQL driver (DB server for multi-node)
+redis==5.2.1                # Persistent rate limiting backend
+
+# --- Phase 5: Observability ---
+prometheus-client==0.22.0   # Metrics export (/metrics)
+opentelemetry-api==1.28.2
+opentelemetry-sdk==1.28.2
+opentelemetry-exporter-otlp==1.28.2
+
+# --- Testing ---
+pytest==8.3.3
+httpx==0.28.1
+
 # --- Database ---
 # sqlite3 đã có sẵn trong Python stdlib (không cần cài thêm)
 

@@ -1,0 +1,33 @@
+# Top-level dependencies (Phase 5 strategy)
+Adafruit-IO
+pyserial
+opencv-python
+opencv-contrib-python
+numpy
+Pillow
+SpeechRecognition
+gTTS
+pygame
+PyAudio
+langchain
+langchain-google-genai
+faiss-cpu
+google-generativeai
+fastapi
+uvicorn[standard]
+jinja2
+python-multipart
+requests
+python-dotenv
+
+# Phase 5
+psycopg2-binary
+redis
+prometheus-client
+opentelemetry-api
+opentelemetry-sdk
+opentelemetry-exporter-otlp
+
+# Testing
+pytest
+httpx

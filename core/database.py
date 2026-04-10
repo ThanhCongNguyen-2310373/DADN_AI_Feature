@@ -23,6 +23,7 @@ import sqlite3
 import threading
 import logging
 import time
+import secrets
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
 
@@ -42,6 +43,7 @@ class DatabaseSingleton:
     """
 
     _instance: "DatabaseSingleton" = None
+    _backend_instance = None
     _lock = threading.Lock()
 
     def __new__(cls, db_path: str = _DEFAULT_DB_PATH):
@@ -55,6 +57,19 @@ class DatabaseSingleton:
 
     @classmethod
     def get_instance(cls, db_path: str = _DEFAULT_DB_PATH) -> "DatabaseSingleton":
+        # Phase 5: cho phép chuyển backend sang PostgreSQL qua config
+        try:
+            import config
+            backend = getattr(config, "DATABASE_BACKEND", "sqlite").lower()
+        except Exception:
+            backend = "sqlite"
+
+        if backend in ("postgres", "postgresql"):
+            if cls._backend_instance is None:
+                from core.database_postgres import PostgreSQLDatabase
+                cls._backend_instance = PostgreSQLDatabase.get_instance()
+            return cls._backend_instance
+
         return cls(db_path)
 
     # ─────────────────────────── Init ───────────────────────────────────
@@ -132,6 +147,37 @@ class DatabaseSingleton:
                 );
                 CREATE INDEX IF NOT EXISTS idx_rl_ts      ON rule_logs(ts);
                 CREATE INDEX IF NOT EXISTS idx_rl_rule_id ON rule_logs(rule_id);
+
+                CREATE TABLE IF NOT EXISTS users (
+                    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                    username       TEXT    NOT NULL UNIQUE,
+                    password_hash  TEXT    NOT NULL,
+                    role           TEXT    NOT NULL DEFAULT 'viewer',
+                    is_active      INTEGER NOT NULL DEFAULT 1,
+                    created_ts     REAL    NOT NULL,
+                    updated_ts     REAL
+                );
+
+                CREATE TABLE IF NOT EXISTS user_profiles (
+                    user_id      INTEGER PRIMARY KEY,
+                    full_name    TEXT,
+                    email        TEXT,
+                    phone        TEXT,
+                    department   TEXT,
+                    updated_ts   REAL,
+                    FOREIGN KEY(user_id) REFERENCES users(id)
+                );
+
+                CREATE TABLE IF NOT EXISTS sessions (
+                    token         TEXT PRIMARY KEY,
+                    user_id       INTEGER NOT NULL,
+                    created_ts    REAL NOT NULL,
+                    expires_ts    REAL NOT NULL,
+                    last_seen_ts  REAL NOT NULL,
+                    FOREIGN KEY(user_id) REFERENCES users(id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
+                CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_ts);
             """)
 
     # ─────────────────────────── Write ──────────────────────────────────
@@ -354,6 +400,113 @@ class DatabaseSingleton:
             rows = conn.execute(sql, params).fetchall()
         return [dict(r) for r in rows]
 
+    # ─────────────────────── Auth / RBAC ───────────────────────────────
+    def get_user_by_username(self, username: str) -> Optional[Dict[str, Any]]:
+        sql = (
+            "SELECT u.*, p.full_name, p.email, p.phone, p.department "
+            "FROM users u LEFT JOIN user_profiles p ON p.user_id = u.id "
+            "WHERE u.username = ?"
+        )
+        with self._get_conn() as conn:
+            row = conn.execute(sql, (username,)).fetchone()
+        return dict(row) if row else None
+
+    def get_user_by_id(self, user_id: int) -> Optional[Dict[str, Any]]:
+        sql = (
+            "SELECT u.*, p.full_name, p.email, p.phone, p.department "
+            "FROM users u LEFT JOIN user_profiles p ON p.user_id = u.id "
+            "WHERE u.id = ?"
+        )
+        with self._get_conn() as conn:
+            row = conn.execute(sql, (user_id,)).fetchone()
+        return dict(row) if row else None
+
+    def list_users(self) -> List[Dict[str, Any]]:
+        sql = (
+            "SELECT u.id, u.username, u.role, u.is_active, u.created_ts, "
+            "p.full_name, p.email, p.phone, p.department "
+            "FROM users u LEFT JOIN user_profiles p ON p.user_id = u.id "
+            "ORDER BY u.id ASC"
+        )
+        with self._get_conn() as conn:
+            rows = conn.execute(sql).fetchall()
+        return [dict(r) for r in rows]
+
+    def create_user(
+        self,
+        username: str,
+        password_hash: str,
+        role: str = "viewer",
+        full_name: Optional[str] = None,
+        email: Optional[str] = None,
+        phone: Optional[str] = None,
+        department: Optional[str] = None,
+        is_active: int = 1,
+    ) -> int:
+        now = time.time()
+        with self._write_lock:
+            with self._get_conn() as conn:
+                cur = conn.execute(
+                    "INSERT INTO users (username, password_hash, role, is_active, created_ts, updated_ts) "
+                    "VALUES (?,?,?,?,?,?)",
+                    (username, password_hash, role, is_active, now, now),
+                )
+                user_id = cur.lastrowid
+                conn.execute(
+                    "INSERT INTO user_profiles (user_id, full_name, email, phone, department, updated_ts) "
+                    "VALUES (?,?,?,?,?,?)",
+                    (user_id, full_name, email, phone, department, now),
+                )
+                return int(user_id)
+
+    def update_user_role(self, user_id: int, role: str) -> bool:
+        with self._write_lock:
+            with self._get_conn() as conn:
+                cur = conn.execute(
+                    "UPDATE users SET role = ?, updated_ts = ? WHERE id = ?",
+                    (role, time.time(), user_id),
+                )
+                return cur.rowcount > 0
+
+    def create_session(self, token: str, user_id: int, expires_ts: float):
+        now = time.time()
+        with self._write_lock:
+            with self._get_conn() as conn:
+                conn.execute(
+                    "INSERT OR REPLACE INTO sessions (token, user_id, created_ts, expires_ts, last_seen_ts) "
+                    "VALUES (?,?,?,?,?)",
+                    (token, user_id, now, expires_ts, now),
+                )
+
+    def get_session(self, token: str) -> Optional[Dict[str, Any]]:
+        sql = (
+            "SELECT s.token, s.user_id, s.created_ts, s.expires_ts, s.last_seen_ts, "
+            "u.username, u.role, u.is_active, p.full_name, p.email, p.phone, p.department "
+            "FROM sessions s "
+            "JOIN users u ON u.id = s.user_id "
+            "LEFT JOIN user_profiles p ON p.user_id = u.id "
+            "WHERE s.token = ?"
+        )
+        with self._get_conn() as conn:
+            row = conn.execute(sql, (token,)).fetchone()
+            if not row:
+                return None
+            data = dict(row)
+            # Sliding session activity update
+            conn.execute("UPDATE sessions SET last_seen_ts = ? WHERE token = ?", (time.time(), token))
+        return data
+
+    def delete_session(self, token: str):
+        with self._write_lock:
+            with self._get_conn() as conn:
+                conn.execute("DELETE FROM sessions WHERE token = ?", (token,))
+
+    def cleanup_expired_sessions(self):
+        now = time.time()
+        with self._write_lock:
+            with self._get_conn() as conn:
+                conn.execute("DELETE FROM sessions WHERE expires_ts < ?", (now,))
+
     def cleanup_old_data(self, keep_days: int = 7):
         """Xóa dữ liệu cũ hơn keep_days ngày để tránh DB phình to."""
         cutoff = time.time() - keep_days * 86400
@@ -363,5 +516,6 @@ class DatabaseSingleton:
                 conn.execute("DELETE FROM device_events   WHERE ts < ?", (cutoff,))
                 conn.execute("DELETE FROM face_events     WHERE ts < ?", (cutoff,))
                 conn.execute("DELETE FROM rule_logs       WHERE ts < ?", (cutoff,))
+                conn.execute("DELETE FROM sessions        WHERE expires_ts < ?", (time.time(),))
                 conn.execute("VACUUM")
         logger.info(f"[DB] 🧹 Đã xóa dữ liệu cũ hơn {keep_days} ngày.")

@@ -99,8 +99,9 @@ WEB_PORT                = int(os.getenv("WEB_PORT", "8000"))
 # ============================================================
 # DATABASE CONFIGURATION
 # ============================================================
-DATABASE_PATH           = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "data", "yolohome.db"
+DATABASE_PATH           = os.getenv(
+    "DATABASE_PATH",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "yolohome.db"),
 )
 DB_KEEP_DAYS            = 7    # Giữ dữ liệu lịch sử 7 ngày
 
@@ -110,3 +111,35 @@ DB_KEEP_DAYS            = 7    # Giữ dữ liệu lịch sử 7 ngày
 OPENWEATHER_API_KEY     = os.getenv("OPENWEATHER_API_KEY", "")
 OPENWEATHER_CITY        = os.getenv("OPENWEATHER_CITY", "Ho Chi Minh City")
 OPENWEATHER_UNITS       = "metric"   # Nhiệt độ °C, tốc độ gió m/s
+
+# ============================================================
+# PHASE 5 - DATA PLATFORM & SECURITY SCALE
+# ============================================================
+# Database backend: "sqlite" (mặc định) hoặc "postgresql"
+DATABASE_BACKEND        = os.getenv("DATABASE_BACKEND", "sqlite").lower()
+
+# PostgreSQL (dùng khi DATABASE_BACKEND=postgresql)
+POSTGRES_DSN            = os.getenv("POSTGRES_DSN", "")
+POSTGRES_HOST           = os.getenv("POSTGRES_HOST", "localhost")
+POSTGRES_PORT           = os.getenv("POSTGRES_PORT", "5432")
+POSTGRES_DB             = os.getenv("POSTGRES_DB", "yolohome")
+POSTGRES_USER           = os.getenv("POSTGRES_USER", "postgres")
+POSTGRES_PASSWORD       = os.getenv("POSTGRES_PASSWORD", "postgres")
+
+# Session + RBAC
+WEB_SESSION_TTL         = int(os.getenv("WEB_SESSION_TTL", str(8 * 3600)))
+ROLE_ADMIN              = "admin"
+ROLE_OPERATOR           = "operator"
+ROLE_VIEWER             = "viewer"
+
+# Persistent rate limiting
+RATE_LIMIT_BACKEND      = os.getenv("RATE_LIMIT_BACKEND", "memory").lower()  # memory|redis
+RATE_LIMIT_MAX_ATTEMPTS = int(os.getenv("RATE_LIMIT_MAX_ATTEMPTS", "5"))
+RATE_LIMIT_WINDOW_SECS  = int(os.getenv("RATE_LIMIT_WINDOW_SECS", "300"))
+REDIS_URL               = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+
+# Observability
+LOG_STRUCTURED          = os.getenv("LOG_STRUCTURED", "1") == "1"
+METRICS_ENABLED         = os.getenv("METRICS_ENABLED", "1") == "1"
+TRACING_ENABLED         = os.getenv("TRACING_ENABLED", "0") == "1"
+OTLP_ENDPOINT           = os.getenv("OTLP_ENDPOINT", "http://localhost:4318/v1/traces")

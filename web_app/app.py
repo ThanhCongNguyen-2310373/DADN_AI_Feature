@@ -26,21 +26,21 @@ import time
 import json
 import threading
 import logging
-import secrets
-import hashlib
 from pathlib import Path
 from typing import Optional, List, Dict, Any, Literal
 from contextlib import asynccontextmanager
-from collections import defaultdict
 
 import cv2
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Request, Response, Depends, Form, status, Query
 from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from fastapi.openapi.utils import get_openapi
-from fastapi.security import APIKeyCookie
 from pydantic import BaseModel, Field
+
+import config
+from core.auth_service import AuthService
+from core.rate_limiter import get_rate_limiter
+from core.observability import ObservabilityMiddleware, metrics_response, init_tracing
 
 # Thêm gateway/ vào sys.path để import các module nội bộ
 GATEWAY_DIR = Path(__file__).parent.parent
@@ -85,64 +85,47 @@ class ConnectionManager:
 ws_manager = ConnectionManager()
 
 # ───────────────────────── Session / Auth ───────────────────────────
-# In-memory session store: {token: {"username": ...}}
-_SESSIONS: Dict[str, Dict] = {}
-_SESSION_TTL = 3600 * 8  # 8 giờ
-
-# Tài khoản mặc định – có thể ghi đè qua biến môi trường
-_ADMIN_USER = os.getenv("WEB_USERNAME", "admin")
-_ADMIN_PASS_HASH = hashlib.sha256(
-    os.getenv("WEB_PASSWORD", "yolohome2025").encode()
-).hexdigest()
+_auth = AuthService.get_instance()
+_rate_limiter = get_rate_limiter()
 
 
-def _create_session() -> str:
-    token = secrets.token_hex(32)
-    _SESSIONS[token] = {"ts": time.time()}
-    return token
+def _get_client_ip(request: Request) -> str:
+    forwarded = request.headers.get("x-forwarded-for", "")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    if request.client and request.client.host:
+        return request.client.host
+    return "unknown"
 
 
-def _valid_session(request: Request) -> bool:
-    token = request.cookies.get("session_token")
-    if not token or token not in _SESSIONS:
-        return False
-    sess = _SESSIONS[token]
-    if time.time() - sess["ts"] > _SESSION_TTL:
-        _SESSIONS.pop(token, None)
-        return False
-    return True
+def _get_current_user(request: Request) -> Optional[Dict[str, Any]]:
+    token = request.cookies.get("session_token", "")
+    return _auth.get_session_user(token)
 
 
-def require_auth(request: Request):
-    """Dependency: redirect sang /login nếu chưa đăng nhập."""
-    if not _valid_session(request):
+def require_auth(request: Request) -> Dict[str, Any]:
+    """Dependency: bắt buộc đăng nhập, trả về user session hiện tại."""
+    user = _get_current_user(request)
+    if not user:
         raise HTTPException(
             status_code=status.HTTP_307_TEMPORARY_REDIRECT,
             headers={"Location": "/login"},
         )
+    request.state.user = user
+    return user
 
 
-# ───────────────────── Rate Limiting (Brute-force protection) ──────────────
-_LOGIN_ATTEMPTS: Dict[str, List[float]] = defaultdict(list)
-_LOGIN_MAX_ATTEMPTS = 5      # Tối đa 5 lần thử trong cửa sổ
-_LOGIN_WINDOW_SECS  = 300    # Cửa sổ 5 phút
+def require_role(*allowed_roles: str):
+    def _dep(user: Dict[str, Any] = Depends(require_auth)):
+        role = str(user.get("role", "viewer"))
+        if role not in allowed_roles:
+            raise HTTPException(status_code=403, detail="Không đủ quyền truy cập")
+        return user
+    return _dep
 
 
-def _check_rate_limit(ip: str) -> bool:
-    """
-    Trả về True nếu IP bị khoá (quá giới hạn thử đăng nhập).
-    Xóa các lần thử cũ hơn _LOGIN_WINDOW_SECS.
-    """
-    now = time.time()
-    attempts = _LOGIN_ATTEMPTS[ip]
-    # Loại bỏ các lần cũ ngoài cửa sổ
-    _LOGIN_ATTEMPTS[ip] = [t for t in attempts if now - t < _LOGIN_WINDOW_SECS]
-    return len(_LOGIN_ATTEMPTS[ip]) >= _LOGIN_MAX_ATTEMPTS
-
-
-def _record_failed_login(ip: str):
-    """Ghi nhận một lần đăng nhập thất bại."""
-    _LOGIN_ATTEMPTS[ip].append(time.time())
+require_operator = require_role(config.ROLE_ADMIN, config.ROLE_OPERATOR)
+require_admin = require_role(config.ROLE_ADMIN)
 
 
 # ───────────────────────── Pydantic Models ────────────────────────
@@ -150,6 +133,9 @@ def _record_failed_login(ip: str):
 async def lifespan(app: FastAPI):
     """Khởi động background task broadcast sensor data qua WebSocket."""
     import asyncio
+
+    _auth.bootstrap_default_admin()
+    init_tracing("yolohome-gateway")
 
     async def _broadcast_loop():
         while True:
@@ -186,6 +172,7 @@ app = FastAPI(
     docs_url="/docs",
     redoc_url="/redoc",
 )
+app.add_middleware(ObservabilityMiddleware)
 
 # Static files & Templates
 _STATIC_DIR = Path(__file__).parent / "static"
@@ -264,6 +251,24 @@ class RuleCreate(BaseModel):
     }
 
 
+class UserCreate(BaseModel):
+    username: str = Field(..., min_length=3, max_length=50)
+    password: str = Field(..., min_length=6, max_length=128)
+    role: Literal["admin", "operator", "viewer"] = Field("viewer")
+    full_name: Optional[str] = Field(default=None, max_length=120)
+    email: Optional[str] = Field(default=None, max_length=120)
+    phone: Optional[str] = Field(default=None, max_length=30)
+    department: Optional[str] = Field(default=None, max_length=120)
+
+
+class UserRoleUpdate(BaseModel):
+    role: Literal["admin", "operator", "viewer"]
+
+
+class VoiceAskRequest(BaseModel):
+    question: str = Field(..., min_length=3, max_length=500)
+
+
 # ─────────────────────────── Helper Functions ───────────────────────────────
 def _get_sensor_data() -> Dict[str, Any]:
     """Lấy dữ liệu cảm biến từ SensorReader hoặc giả lập."""
@@ -315,7 +320,7 @@ def _get_face_log() -> List[Dict]:
 @app.get("/login", response_class=HTMLResponse, tags=["Security"],
          summary="Trang đăng nhập", include_in_schema=False)
 async def login_page(request: Request):
-    if _valid_session(request):
+    if _get_current_user(request):
         return RedirectResponse("/")
     return templates.TemplateResponse(request=request, name="login.html", context={"error": ""})
 
@@ -326,27 +331,30 @@ async def login_page(request: Request):
                       "Bảo vệ brute-force: khoá IP sau 5 lần sai trong 5 phút.",
           include_in_schema=False)
 async def login(request: Request, username: str = Form(...), password: str = Form(...)):
-    client_ip = request.client.host or "unknown"
-    # Kiểm tra rate limit
-    if _check_rate_limit(client_ip):
+    client_ip = _get_client_ip(request)
+    blocked, _ = _rate_limiter.check(client_ip)
+    if blocked:
         return templates.TemplateResponse(
-            "login.html",
-            {"request": request, "error": "Quá nhiều lần thử. Vui lòng đợi 5 phút."},
+            request=request,
+            name="login.html",
+            context={"request": request, "error": "Quá nhiều lần thử. Vui lòng đợi 5 phút."},
             status_code=429,
         )
-    pw_hash = hashlib.sha256(password.encode()).hexdigest()
-    if username == _ADMIN_USER and pw_hash == _ADMIN_PASS_HASH:
-        # Đăng nhập thành công — xoá lịch sử lần thử của IP này
-        _LOGIN_ATTEMPTS.pop(client_ip, None)
-        token = _create_session()
+
+    user = _auth.authenticate(username=username, password=password)
+    if user:
+        _rate_limiter.reset(client_ip)
+        token = _auth.create_session(int(user["id"]))
         resp = RedirectResponse("/", status_code=303)
         resp.set_cookie("session_token", token, httponly=True, samesite="lax")
         return resp
-    _record_failed_login(client_ip)
-    remaining = _LOGIN_MAX_ATTEMPTS - len(_LOGIN_ATTEMPTS[client_ip])
+
+    _rate_limiter.record_failure(client_ip)
+    _, remaining = _rate_limiter.check(client_ip)
     return templates.TemplateResponse(
-        "login.html",
-        {"request": request, "error": f"Sai tên đăng nhập hoặc mật khẩu. Còn {remaining} lần thử."},
+        request=request,
+        name="login.html",
+        context={"request": request, "error": f"Sai tên đăng nhập hoặc mật khẩu. Còn {remaining} lần thử."},
         status_code=401,
     )
 
@@ -354,7 +362,7 @@ async def login(request: Request, username: str = Form(...), password: str = For
 @app.get("/logout", tags=["Security"], summary="Đăng xuất", include_in_schema=False)
 async def logout(request: Request):
     token = request.cookies.get("session_token")
-    _SESSIONS.pop(token, None)
+    _auth.delete_session(token)
     resp = RedirectResponse("/login")
     resp.delete_cookie("session_token")
     return resp
@@ -371,8 +379,8 @@ async def index(request: Request, _=Depends(require_auth)):
 # ── Members (Face Enrollment) ──
 @app.get("/members", response_class=HTMLResponse, tags=["AI Features"],
          summary="Trang quản lý khuôn mặt", include_in_schema=False)
-async def members_page(request: Request, _=Depends(require_auth)):
-    return templates.TemplateResponse("members.html", {"request": request})
+async def members_page(request: Request, _=Depends(require_operator)):
+    return templates.TemplateResponse(request=request, name="members.html", context={"request": request})
 
 
 @app.get("/api/sensors", tags=["IoT Control"],
@@ -439,6 +447,107 @@ async def get_chat(_=Depends(require_auth)):
     return JSONResponse({"history": _get_chat_history()})
 
 
+@app.get("/api/me", tags=["Security"],
+         summary="Hồ sơ người dùng hiện tại",
+         description="Trả về thông tin profile + role từ session hiện tại.")
+async def get_me(user: Dict[str, Any] = Depends(require_auth)):
+    safe = {
+        "id": user.get("user_id") or user.get("id"),
+        "username": user.get("username"),
+        "role": user.get("role"),
+        "full_name": user.get("full_name"),
+        "email": user.get("email"),
+        "phone": user.get("phone"),
+        "department": user.get("department"),
+    }
+    return JSONResponse({"user": safe})
+
+
+@app.get("/api/users", tags=["Security"],
+         summary="Danh sách người dùng",
+         description="Admin API: liệt kê người dùng và role.")
+async def list_users(_=Depends(require_admin)):
+    return JSONResponse({"users": _auth.list_users()})
+
+
+@app.post("/api/users", tags=["Security"],
+          summary="Tạo người dùng mới",
+          description="Admin API: tạo user mới với profile và role.")
+async def create_user(req: UserCreate, _=Depends(require_admin)):
+    user_id = _auth.create_user(
+        username=req.username,
+        password=req.password,
+        role=req.role,
+        full_name=req.full_name,
+        email=req.email,
+        phone=req.phone,
+        department=req.department,
+    )
+    return JSONResponse({"status": "created", "id": user_id})
+
+
+@app.patch("/api/users/{user_id}/role", tags=["Security"],
+           summary="Cập nhật role người dùng",
+           description="Admin API: đổi vai trò cho user.")
+async def update_user_role(user_id: int, req: UserRoleUpdate, _=Depends(require_admin)):
+    ok = _auth.update_user_role(user_id=user_id, role=req.role)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Không tìm thấy user")
+    return JSONResponse({"status": "updated", "id": user_id, "role": req.role})
+
+
+@app.post("/api/voice/ask", tags=["AI Features"],
+          summary="Hỏi đáp AI qua HTTP",
+          description="API hỏi đáp không cần microphone; dùng chung logic với Voice Assistant.")
+async def voice_ask(req: VoiceAskRequest, _=Depends(require_auth)):
+    if _voice_assistant is None:
+        return JSONResponse({"answer": "Voice Assistant chưa được khởi động."})
+    try:
+        text = req.question.strip()
+        if not text:
+            raise HTTPException(status_code=400, detail="Question rỗng")
+
+        if hasattr(_voice_assistant, "_answer_weather") and any(
+            kw in text.lower() for kw in ["thời tiết", "thoi tiet", "trời", "mưa", "nắng", "weather"]
+        ):
+            ans = _voice_assistant._answer_weather(text)
+        elif hasattr(_voice_assistant, "_ask_rag"):
+            ans = _voice_assistant._ask_rag(text)
+        else:
+            ans = "Voice Assistant không hỗ trợ ask API ở phiên bản hiện tại."
+        return JSONResponse({"answer": ans})
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/ml/forecast", tags=["AI Features"],
+         summary="Dự báo tiêu thụ năng lượng",
+         description="ML endpoint: dự báo kWh trong các giờ tới từ lịch sử bật/tắt thiết bị.")
+async def ml_forecast(
+    history_hours: int = Query(48, ge=12, le=240),
+    horizon_hours: int = Query(6, ge=1, le=24),
+    _=Depends(require_auth),
+):
+    from core.ml_analytics import MLEnergyAnalytics
+    data = MLEnergyAnalytics().forecast_energy(history_hours=history_hours, horizon_hours=horizon_hours)
+    return JSONResponse(data)
+
+
+@app.get("/api/ml/anomalies", tags=["AI Features"],
+         summary="Phát hiện hành vi bất thường",
+         description="ML endpoint: phát hiện bất thường từ sensor/energy bằng z-score.")
+async def ml_anomalies(
+    hours: int = Query(24, ge=6, le=168),
+    z_threshold: float = Query(3.0, ge=2.0, le=5.0),
+    _=Depends(require_auth),
+):
+    from core.ml_analytics import MLEnergyAnalytics
+    data = MLEnergyAnalytics().detect_anomalies(hours=hours, z_threshold=z_threshold)
+    return JSONResponse(data)
+
+
 @app.get("/api/face/log", tags=["AI Features"],
          summary="Nhật ký nhận diện khuôn mặt",
          description="Trả về 10 sự kiện nhận diện gần nhất dưới dạng URL ảnh JPEG.")
@@ -466,7 +575,7 @@ async def get_face_members(_=Depends(require_auth)):
           description="Chụp `num_samples` ảnh khuôn mặt từ webcam và lưu vào thư mục dataset. "
                       "Chạy trong background thread, trả về ngay (non-blocking). "
                       "Sau khi chụp xong, gọi `/api/face/train` để retrain model.")
-async def face_enroll(req: EnrollRequest, _=Depends(require_auth)):
+async def face_enroll(req: EnrollRequest, _=Depends(require_operator)):
     name = req.person_name.strip()
     if not name or not name.replace(" ", "").isalnum():
         raise HTTPException(status_code=400, detail="Tên không hợp lệ (chỉ chữ + số).")
@@ -511,7 +620,7 @@ async def face_enroll(req: EnrollRequest, _=Depends(require_auth)):
           summary="Train lại LBPH model",
           description="Chạy lại quá trình huấn luyện LBPH từ toàn bộ dataset hiện tại. "
                       "Chạy trong background thread, trả về ngay. Mất khoảng 5–30 giây.")
-async def face_train(_=Depends(require_auth)):
+async def face_train(_=Depends(require_operator)):
     def _do_train():
         try:
             sys.path.insert(0, str(GATEWAY_DIR))
@@ -529,11 +638,10 @@ async def face_train(_=Depends(require_auth)):
           summary="Điều khiển thiết bị",
           description="Publish lệnh điều khiển lên Adafruit IO MQTT và ghi sự kiện vào SQLite. "
                       "Source được đánh dấu là `web` trong bảng `device_events`.")
-async def control_device(cmd: ControlCommand, request: Request, _=Depends(require_auth)):
+async def control_device(cmd: ControlCommand, request: Request, _=Depends(require_operator)):
     from core.mqtt_client import MQTTSingleton
     from config import (
         FEED_LED, FEED_FAN, FEED_DOOR, FEED_PUMP,
-        ADAFRUIT_USERNAME,
     )
 
     feed_map = {
@@ -579,7 +687,7 @@ async def list_rules(_=Depends(require_auth)):
           summary="Tạo quy tắc mới",
           description="Thêm một quy tắc tự động hoá mới. Ví dụ: "
                       "'Nếu temp > 32 → bật quạt + gửi Telegram'.")
-async def create_rule(rule: RuleCreate, _=Depends(require_auth)):
+async def create_rule(rule: RuleCreate, _=Depends(require_operator)):
     try:
         from core.database import DatabaseSingleton
         db = DatabaseSingleton.get_instance()
@@ -601,7 +709,7 @@ async def create_rule(rule: RuleCreate, _=Depends(require_auth)):
 @app.delete("/api/rules/{rule_id}", tags=["Automation"],
             summary="Xoá quy tắc",
             description="Xoá quy tắc theo ID. Rule Engine sẽ ngừng áp dụng quy tắc này ngay lập tức.")
-async def delete_rule(rule_id: int, _=Depends(require_auth)):
+async def delete_rule(rule_id: int, _=Depends(require_operator)):
     try:
         from core.database import DatabaseSingleton
         db = DatabaseSingleton.get_instance()
@@ -614,7 +722,7 @@ async def delete_rule(rule_id: int, _=Depends(require_auth)):
 @app.patch("/api/rules/{rule_id}/toggle", tags=["Automation"],
            summary="Bật/tắt quy tắc",
            description="Chuyển đổi trạng thái enabled/disabled của một quy tắc mà không xoá nó.")
-async def toggle_rule(rule_id: int, _=Depends(require_auth)):
+async def toggle_rule(rule_id: int, _=Depends(require_operator)):
     try:
         from core.database import DatabaseSingleton
         db = DatabaseSingleton.get_instance()
@@ -622,6 +730,20 @@ async def toggle_rule(rule_id: int, _=Depends(require_auth)):
         return {"status": "toggled", "id": rule_id, "enabled": new_state}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/health", tags=["Security"],
+         summary="Health check")
+async def health():
+    return {"status": "ok", "service": "yolohome-gateway"}
+
+
+@app.get("/metrics", tags=["Security"],
+         summary="Prometheus metrics")
+async def metrics():
+    if not config.METRICS_ENABLED:
+        return JSONResponse({"enabled": False, "message": "Metrics disabled"}, status_code=404)
+    return metrics_response()
 
 
 @app.get("/video_feed", tags=["AI Features"],
