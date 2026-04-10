@@ -16,13 +16,13 @@ Pillow==10.3.0              # Xử lý ảnh bổ sung
 SpeechRecognition==3.10.1   # STT - Google Web Speech API
 gTTS==2.5.1                 # TTS - Google Text-to-Speech
 pygame==2.5.2               # Phát âm thanh TTS
-PyAudio==0.2.14             # Microphone input (cần cài PortAudio trước)
+PyAudio==0.2.14; platform_system == "Windows"  # Microphone input (CI Linux không cần)
 
 # --- AI / RAG (Tùy chọn - bật GeminiRAGAssistant) ---
 langchain==0.2.0            # LLM orchestration framework
-langchain-google-genai==1.0.3  # Gemini LLM + Embeddings
+langchain-google-genai==1.0.10  # Tương thích langchain-core 0.2.x
 faiss-cpu==1.8.0            # Vector store cho RAG
-google-generativeai==0.5.4  # Google Gemini SDK
+google-generativeai==0.7.2  # Theo yêu cầu của langchain-google-genai 1.0.10
 
 # --- Web Dashboard ---
 fastapi==0.135.1            # REST API + WebSocket framework

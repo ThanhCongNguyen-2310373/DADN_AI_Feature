@@ -8,11 +8,11 @@ Pillow
 SpeechRecognition
 gTTS
 pygame
-PyAudio
+PyAudio; platform_system == "Windows"
 langchain
-langchain-google-genai
+langchain-google-genai==1.0.10
 faiss-cpu
-google-generativeai
+google-generativeai==0.7.2
 fastapi
 uvicorn[standard]
 jinja2
