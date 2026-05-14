@@ -234,6 +234,40 @@ class IntentNLPEngine:
         else:
             self._lex = {}
 
+    @staticmethod
+    def _patch_fasttext_numpy2(fasttext_module) -> None:
+        """Patch fasttext to work with NumPy 2.0+ (copy=False in np.array is deprecated)."""
+        try:
+            original_predict = fasttext_module.FastText.predict
+
+            def patched_predict(self, text, k=1, threshold=0.0, on_unicode_error='strict'):
+                """Patched predict that uses np.asarray instead of np.array(..., copy=False)."""
+                def check(entry):
+                    if entry.find('\n') != -1:
+                        raise ValueError("predict processes one line at a time (remove '\\n')")
+                    entry += "\n"
+                    return entry
+
+                if isinstance(text, list):
+                    text = [check(entry) for entry in text]
+                    all_labels, all_probs = self.f.multilinePredict(
+                        text, k, threshold, on_unicode_error)
+                    return all_labels, all_probs
+                else:
+                    text = check(text)
+                    predictions = self.f.predict(text, k, threshold, on_unicode_error)
+                    if predictions:
+                        probs, labels = zip(*predictions)
+                    else:
+                        probs, labels = ([], ())
+                    # Use np.asarray instead of np.array(..., copy=False) for NumPy 2.0+ compatibility
+                    return labels, np.asarray(probs)
+
+            fasttext_module.FastText.predict = patched_predict
+            logger.debug("[Intent] Patched fasttext for NumPy 2.0+ compatibility")
+        except Exception as e:
+            logger.warning("[Intent] Failed to patch fasttext: %s", e)
+
     def _ensure_ml_model(self) -> None:
         os.makedirs(_DATA_DIR, exist_ok=True)
         lines = _read_corpus_lines()
@@ -241,6 +275,9 @@ class IntentNLPEngine:
         # --- fastText nếu khả dụng ---
         try:
             import fasttext  # type: ignore
+            
+            # Patch fasttext for NumPy 2.0+ compatibility (np.array(..., copy=False) deprecated)
+            self._patch_fasttext_numpy2(fasttext)
 
             if not os.path.isfile(_FASTTEXT_BIN):
                 train_path = os.path.join(_DATA_DIR, "intent_train.txt")
