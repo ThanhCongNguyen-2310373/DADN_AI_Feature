@@ -54,6 +54,197 @@ _sensor_reader = None
 _voice_assistant = None
 _face_recognizer = None
 
+
+class FaceEnrollSession:
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._status = {
+            "status": "idle",
+            "captured": 0,
+            "remaining": 0,
+            "stage_text": "",
+            "stage_index": 0,
+            "quality_ok": False,
+            "reasons": [],
+            "blur": 0.0,
+            "brightness": 0.0,
+            "auto_mode": True,
+            "paused": False,
+            "person_name": "",
+            "num_samples": 0,
+            "message": "",
+            "error": "",
+        }
+        self.pause_event = threading.Event()
+        self.cancel_event = threading.Event()
+        self.thread: threading.Thread | None = None
+
+    def start(self, person_name: str, num_samples: int, thread: threading.Thread):
+        with self._lock:
+            self._status.update({
+                "status": "running",
+                "captured": 0,
+                "remaining": num_samples,
+                "person_name": person_name,
+                "num_samples": num_samples,
+                "message": "Đang khởi tạo phiên chụp...",
+                "error": "",
+            })
+            self.pause_event.clear()
+            self.cancel_event.clear()
+            self.thread = thread
+
+    def update(self, data: Dict[str, Any]):
+        with self._lock:
+            self._status.update(data)
+
+    def set_message(self, message: str):
+        with self._lock:
+            self._status["message"] = message
+
+    def set_error(self, message: str):
+        with self._lock:
+            self._status["status"] = "error"
+            self._status["error"] = message
+            self._status["message"] = message
+
+    def mark_completed(self):
+        with self._lock:
+            self._status["status"] = "completed"
+            self._status["message"] = "Hoàn tất chụp mẫu."
+            self._status["remaining"] = 0
+
+    def snapshot(self):
+        with self._lock:
+            data = dict(self._status)
+            data["paused"] = self.pause_event.is_set()
+            data["cancelled"] = self.cancel_event.is_set()
+            return data
+
+    def is_active(self) -> bool:
+        status = self.snapshot().get("status", "idle")
+        return status in {"running", "paused"}
+
+
+class FaceTrainSession:
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._status = {
+            "status": "idle",
+            "stage": "idle",
+            "message": "Chưa bắt đầu train.",
+            "error": "",
+            "progress": 0,
+            "current_person": "",
+            "processed_people": 0,
+            "total_people": 0,
+            "trained_images": 0,
+            "trained_people": [],
+            "accuracy": 0.0,
+            "model_path": "",
+            "label_map_path": "",
+            "report_path": "",
+            "selected_members": [],
+            "mode": "all",
+            "started_at": None,
+            "finished_at": None,
+        }
+        self.thread: threading.Thread | None = None
+
+    def start(self, thread: threading.Thread, mode: str, selected_members: List[str]):
+        with self._lock:
+            self._status.update({
+                "status": "running",
+                "stage": "starting",
+                "message": "Đang chuẩn bị train model...",
+                "error": "",
+                "progress": 0,
+                "current_person": "",
+                "processed_people": 0,
+                "total_people": 0,
+                "trained_images": 0,
+                "trained_people": [],
+                "accuracy": 0.0,
+                "model_path": "",
+                "label_map_path": "",
+                "report_path": "",
+                "selected_members": list(selected_members),
+                "mode": mode,
+                "started_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "finished_at": None,
+            })
+            self.thread = thread
+
+    def update(self, data: Dict[str, Any]):
+        with self._lock:
+            self._status.update(data)
+
+    def set_error(self, message: str):
+        with self._lock:
+            self._status["status"] = "error"
+            self._status["error"] = message
+            self._status["message"] = message
+            self._status["finished_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+
+    def mark_completed(self):
+        with self._lock:
+            self._status["status"] = "completed"
+            if not self._status.get("message"):
+                self._status["message"] = "Train hoàn tất."
+            self._status["progress"] = 100
+            self._status["finished_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+
+    def snapshot(self):
+        with self._lock:
+            return dict(self._status)
+
+
+_face_enroll_session = FaceEnrollSession()
+_face_train_session = FaceTrainSession()
+
+
+def _draw_face_enroll_overlay(frame):
+    info = _face_enroll_session.snapshot()
+    status = info.get("status", "idle")
+    person = info.get("person_name", "")
+    captured = int(info.get("captured", 0) or 0)
+    remaining = int(info.get("remaining", 0) or 0)
+    stage_text = str(info.get("stage_text", ""))
+    quality_ok = bool(info.get("quality_ok", False))
+    reasons = info.get("reasons", []) or []
+    message = info.get("message", "") or ""
+
+    overlay_lines = [
+        f"Trang thai: {status}",
+        f"Thanh vien: {person}" if person else "Thanh vien: -",
+        f"Da chup: {captured} | Con lai: {remaining}",
+        f"Buoc: {stage_text}" if stage_text else "Buoc: -",
+        f"Chat luong: {'DAT' if quality_ok else 'CHUA DAT'}",
+    ]
+    if reasons:
+        overlay_lines.append("Ly do: " + ", ".join(reasons[:2]))
+    if message:
+        overlay_lines.append(message)
+
+    overlay = frame.copy()
+    cv2.rectangle(overlay, (8, 8), (420, 170), (0, 0, 0), -1)
+    cv2.addWeighted(overlay, 0.45, frame, 0.55, 0, frame)
+
+    y = 30
+    for line in overlay_lines:
+        cv2.putText(frame, line, (20, y), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (255, 255, 255), 1, cv2.LINE_AA)
+        y += 22
+
+    if status in {"running", "paused"}:
+        bar_w = 360
+        ratio = 0.0
+        total = int(info.get("num_samples", 0) or 0)
+        if total > 0:
+            ratio = max(0.0, min(1.0, captured / total))
+        cv2.rectangle(frame, (20, 145), (20 + bar_w, 160), (80, 80, 80), 1)
+        cv2.rectangle(frame, (20, 145), (20 + int(bar_w * ratio), 160), (0, 200, 255), -1)
+        cv2.putText(frame, f"{int(ratio * 100)}%", (388, 158), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1)
+
 # WebSocket connection manager
 class ConnectionManager:
     def __init__(self):
@@ -217,13 +408,33 @@ class EnrollRequest(BaseModel):
         description="Tên thành viên cần đăng ký (chữ và số)"
     )
     num_samples: int = Field(
-        30, ge=10, le=100,
-        description="Số ảnh mẫu cần chụp (10–100, mặc định 30)"
+        80, ge=80, le=200,
+        description="Số ảnh mẫu cần chụp (80–200, mặc định 80)"
     )
 
     model_config = {
         "json_schema_extra": {
-            "examples": [{"person_name": "Nguyen Van A", "num_samples": 30}]
+            "examples": [{"person_name": "Nguyen Van A", "num_samples": 80}]
+        }
+    }
+
+
+class TrainRequest(BaseModel):
+    mode: Literal["all", "selected"] = Field(
+        "all",
+        description="Train toàn bộ dataset hoặc chỉ các thành viên được chọn",
+    )
+    selected_members: List[str] = Field(
+        default_factory=list,
+        description="Danh sách thành viên được chọn khi mode=selected",
+    )
+
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {"mode": "all", "selected_members": []},
+                {"mode": "selected", "selected_members": ["Cong", "Bame"]},
+            ]
         }
     }
 
@@ -310,17 +521,52 @@ def _get_chat_history() -> List[Dict]:
 
 def _get_face_log() -> List[Dict]:
     """Lấy log sự kiện nhận diện khuôn mặt gần nhất."""
-    log_dir = GATEWAY_DIR / "logs" / "face_events"
-    if not log_dir.exists():
-        return []
+    try:
+        from core.database import DatabaseSingleton
+        db = DatabaseSingleton.get_instance()
+        rows = db.get_face_events(hours=24, limit=10)
+    except Exception as e:
+        logger.debug(f"[WebApp] face log db error: {e}")
+        rows = []
+
     entries = []
-    for f in sorted(log_dir.glob("*.jpg"), key=os.path.getmtime, reverse=True)[:10]:
+    for row in rows:
+        img_path = row.get("img_path") or ""
+        url = None
+        if img_path:
+            try:
+                abs_img = Path(img_path)
+                if not abs_img.is_absolute():
+                    abs_img = (GATEWAY_DIR / img_path).resolve()
+                if abs_img.exists():
+                    url = f"/face_log/{abs_img.name}"
+            except Exception:
+                url = None
         entries.append({
-            "filename": f.name,
-            "time": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(os.path.getmtime(f))),
-            "url": f"/face_log/{f.name}",
+            "event_type": row.get("event_type", ""),
+            "person": row.get("person") or "",
+            "confidence": row.get("confidence"),
+            "time": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(float(row.get("ts", 0) or 0))),
+            "url": url,
+            "filename": os.path.basename(img_path) if img_path else "",
         })
     return entries
+
+
+def _get_face_status() -> Dict[str, Any]:
+    if _face_recognizer is not None and hasattr(_face_recognizer, "get_status"):
+        try:
+            return _face_recognizer.get_status()
+        except Exception as e:
+            logger.debug(f"[WebApp] face status error: {e}")
+    return {
+        "state": "idle",
+        "message": "Chờ nhận diện...",
+        "person_name": "",
+        "similarity": 0.0,
+        "event_type": "none",
+        "timestamp": None,
+    }
 
 
 # ───────────────────────── Routes ───────────────────────────────
@@ -564,6 +810,13 @@ async def get_face_log(_=Depends(require_auth)):
     return JSONResponse({"events": _get_face_log()})
 
 
+@app.get("/api/face/status", tags=["AI Features"],
+         summary="Trạng thái nhận diện khuôn mặt",
+         description="Trả về trạng thái nhận diện mới nhất: người đã đăng ký, người lạ hoặc đang chờ.")
+async def get_face_status(_=Depends(require_auth)):
+    return JSONResponse(_get_face_status())
+
+
 @app.get("/api/face/members", tags=["AI Features"],
          summary="Danh sách thành viên đã đăng ký",
          description="Quét thư mục `dataset/` và trả về tên + số ảnh mẫu của từng người.")
@@ -589,58 +842,130 @@ async def face_enroll(req: EnrollRequest, _=Depends(require_operator)):
     if not name or not name.replace(" ", "").isalnum():
         raise HTTPException(status_code=400, detail="Tên không hợp lệ (chỉ chữ + số).")
 
+    if _face_enroll_session.thread and _face_enroll_session.thread.is_alive():
+        raise HTTPException(status_code=409, detail="Đang có một phiên chụp khác đang chạy.")
+
     def _do_enroll():
         try:
-            import config as cfg
-            face_cascade = cv2.CascadeClassifier(
-                cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
-            )
-            save_dir = Path(GATEWAY_DIR) / cfg.FACE_DATASET_DIR / name
-            save_dir.mkdir(parents=True, exist_ok=True)
+            sys.path.insert(0, str(GATEWAY_DIR))
+            from ai.face_recognition.face_register import capture_face_samples_from_provider
 
-            cap = cv2.VideoCapture(cfg.CAMERA_INDEX)
-            cap.set(cv2.CAP_PROP_FRAME_WIDTH, 320)
-            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
-            count = 0
-            while count < req.num_samples:
-                ret, frame = cap.read()
-                if not ret:
-                    break
-                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-                faces = face_cascade.detectMultiScale(gray, 1.1, 4, minSize=(50, 50))
-                for (x, y, w, h) in faces:
-                    face_roi = cv2.resize(gray[y:y+h, x:x+w], (100, 100))
-                    img_path = save_dir / f"{name}_{count:03d}.jpg"
-                    cv2.imwrite(str(img_path), face_roi)
-                    count += 1
-                    if count >= req.num_samples:
-                        break
-                time.sleep(0.1)
-            cap.release()
-            logger.info(f"[Enroll] Đã chụp {count} ảnh cho '{name}'")
+            if _face_recognizer is None or not hasattr(_face_recognizer, "get_latest_frame"):
+                raise RuntimeError("FaceRecognizer chưa sẵn sàng để cung cấp frame.")
+
+            _face_enroll_session.set_message("Đang chụp mẫu theo hướng dẫn trên camera...")
+            ok = capture_face_samples_from_provider(
+                name,
+                req.num_samples,
+                frame_provider=_face_recognizer.get_latest_frame,
+                pause_event=_face_enroll_session.pause_event,
+                cancel_event=_face_enroll_session.cancel_event,
+                progress_callback=_face_enroll_session.update,
+            )
+            if ok:
+                _face_enroll_session.mark_completed()
+                logger.info(f"[Enroll] ✅ Đã thu thập {req.num_samples} ảnh cho '{name}'")
+            elif _face_enroll_session.cancel_event.is_set():
+                _face_enroll_session.update({"status": "cancelled", "message": "Phiên chụp đã bị huỷ."})
+            else:
+                _face_enroll_session.set_error("Thu thập chưa đủ ảnh yêu cầu.")
+                logger.warning(f"[Enroll] ⚠️ Thu thập chưa đủ ảnh cho '{name}'")
         except Exception as e:
+            _face_enroll_session.set_error(str(e))
             logger.error(f"[Enroll] Lỗi: {e}")
 
-    threading.Thread(target=_do_enroll, daemon=True, name="FaceEnroll").start()
+    thread = threading.Thread(target=_do_enroll, daemon=True, name="FaceEnroll")
+    _face_enroll_session.start(name, req.num_samples, thread)
+    thread.start()
     return {"status": "started", "person": name, "samples": req.num_samples}
+
+
+@app.get("/api/face/enroll/status", tags=["AI Features"],
+         summary="Trạng thái phiên chụp khuôn mặt")
+async def face_enroll_status(_=Depends(require_auth)):
+    return JSONResponse(_face_enroll_session.snapshot())
+
+
+@app.get("/api/face/train/status", tags=["AI Features"],
+         summary="Trạng thái train khuôn mặt")
+async def face_train_status(_=Depends(require_auth)):
+    return JSONResponse(_face_train_session.snapshot())
+
+
+@app.post("/api/face/enroll/pause", tags=["AI Features"],
+          summary="Tạm dừng phiên chụp khuôn mặt")
+async def face_enroll_pause(_=Depends(require_operator)):
+    _face_enroll_session.pause_event.set()
+    _face_enroll_session.update({"status": "paused", "message": "Đã tạm dừng phiên chụp."})
+    return JSONResponse(_face_enroll_session.snapshot())
+
+
+@app.post("/api/face/enroll/resume", tags=["AI Features"],
+          summary="Tiếp tục phiên chụp khuôn mặt")
+async def face_enroll_resume(_=Depends(require_operator)):
+    _face_enroll_session.pause_event.clear()
+    _face_enroll_session.update({"status": "running", "message": "Đang tiếp tục chụp mẫu..."})
+    return JSONResponse(_face_enroll_session.snapshot())
+
+
+@app.post("/api/face/enroll/cancel", tags=["AI Features"],
+          summary="Huỷ phiên chụp khuôn mặt")
+async def face_enroll_cancel(_=Depends(require_operator)):
+    _face_enroll_session.cancel_event.set()
+    _face_enroll_session.update({"status": "cancelled", "message": "Đã huỷ phiên chụp."})
+    return JSONResponse(_face_enroll_session.snapshot())
 
 
 @app.post("/api/face/train", tags=["AI Features"],
           summary="Train lại LBPH model",
           description="Chạy lại quá trình huấn luyện LBPH từ toàn bộ dataset hiện tại. "
                       "Chạy trong background thread, trả về ngay. Mất khoảng 5–30 giây.")
-async def face_train(_=Depends(require_operator)):
+async def face_train(req: TrainRequest, _=Depends(require_operator)):
+    if _face_train_session.thread and _face_train_session.thread.is_alive():
+        raise HTTPException(status_code=409, detail="Đang có một phiên train khác đang chạy.")
+
+    selected_members = [name.strip() for name in req.selected_members if str(name).strip()]
+    if req.mode == "selected" and not selected_members:
+        raise HTTPException(status_code=400, detail="Hãy chọn ít nhất một thành viên để train.")
+
     def _do_train():
         try:
             sys.path.insert(0, str(GATEWAY_DIR))
             from ai.face_recognition.face_register import train_face_model
-            train_face_model()
-            logger.info("[Train] ✅ Model LBPH đã được train lại thành công.")
+            _face_train_session.update({
+                "status": "running",
+                "stage": "starting",
+                "message": "Đang quét dataset...",
+            })
+            ok = train_face_model(
+                progress_callback=_face_train_session.update,
+                include_members=selected_members if req.mode == "selected" else None,
+            )
+            if ok:
+                _face_train_session.update({"message": "Huấn luyện xong. Đang nạp lại model...", "stage": "reloading", "progress": 100})
+                reload_ok = True
+                if _face_recognizer is not None and hasattr(_face_recognizer, "reload_model"):
+                    try:
+                        reload_ok = bool(_face_recognizer.reload_model())
+                    except Exception as reload_err:
+                        reload_ok = False
+                        logger.warning(f"[Train] Không thể reload FaceAI: {reload_err}")
+                if reload_ok:
+                    _face_train_session.update({"message": "Huấn luyện hoàn tất và model đã được nạp lại.", "stage": "completed", "progress": 100})
+                else:
+                    _face_train_session.update({"message": "Huấn luyện hoàn tất nhưng reload model gặp lỗi.", "stage": "warning", "progress": 100})
+                _face_train_session.mark_completed()
+                logger.info("[Train] ✅ Model LBPH đã được train lại thành công.")
+            else:
+                _face_train_session.set_error("Huấn luyện thất bại.")
         except Exception as e:
+            _face_train_session.set_error(str(e))
             logger.error(f"[Train] Lỗi train model: {e}")
 
-    threading.Thread(target=_do_train, daemon=True, name="FaceTrain").start()
-    return {"status": "training_started"}
+    thread = threading.Thread(target=_do_train, daemon=True, name="FaceTrain")
+    _face_train_session.start(thread, req.mode, selected_members)
+    thread.start()
+    return {"status": "training_started", "mode": req.mode, "selected_members": selected_members}
 
 
 @app.post("/api/control", tags=["IoT Control"],
@@ -761,35 +1086,46 @@ async def metrics():
                      "Dùng trong thẻ `<img src='/video_feed'>` trên Dashboard.")
 async def video_feed():
     def generate():
-        # Lấy frame từ FaceRecognizer nếu có, không thì mở camera trực tiếp
-        cap = None
+        preview_w = 640
+        preview_h = int(preview_w * config.FACE_FRAME_HEIGHT / max(1, config.FACE_FRAME_WIDTH))
+        # Lấy frame từ FaceRecognizer cache nếu có, không thì mở camera trực tiếp
+        if _face_recognizer is not None and hasattr(_face_recognizer, "get_latest_frame"):
+            while True:
+                frame = _face_recognizer.get_latest_frame()
+                if frame is None:
+                    time.sleep(0.05)
+                    continue
+                _draw_face_enroll_overlay(frame)
+                frame_small = cv2.resize(frame, (preview_w, preview_h))
+                _, jpeg = cv2.imencode(".jpg", frame_small, [cv2.IMWRITE_JPEG_QUALITY, 70])
+                yield (
+                    b"--frame\r\n"
+                    b"Content-Type: image/jpeg\r\n\r\n" + jpeg.tobytes() + b"\r\n"
+                )
+                time.sleep(0.1)
+            return
+
+        cap = cv2.VideoCapture(0)
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, config.FACE_FRAME_WIDTH)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, config.FACE_FRAME_HEIGHT)
+
         try:
-            if _face_recognizer is not None and hasattr(_face_recognizer, "_cap"):
-                cap = _face_recognizer._cap
-            else:
-                cap = cv2.VideoCapture(0)
-                cap.set(cv2.CAP_PROP_FRAME_WIDTH, 320)
-                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
-
-            own_cap = (_face_recognizer is None or not hasattr(_face_recognizer, "_cap"))
-
             while True:
                 if cap is None or not cap.isOpened():
                     break
                 ret, frame = cap.read()
                 if not ret:
                     break
-                frame_small = cv2.resize(frame, (320, 240))
+                _draw_face_enroll_overlay(frame)
+                frame_small = cv2.resize(frame, (preview_w, preview_h))
                 _, jpeg = cv2.imencode(".jpg", frame_small, [cv2.IMWRITE_JPEG_QUALITY, 70])
                 yield (
                     b"--frame\r\n"
                     b"Content-Type: image/jpeg\r\n\r\n" + jpeg.tobytes() + b"\r\n"
                 )
                 time.sleep(0.1)  # ~10 FPS
-
         finally:
-            if cap is not None and own_cap:
-                cap.release()
+            cap.release()
 
     return StreamingResponse(
         generate(),

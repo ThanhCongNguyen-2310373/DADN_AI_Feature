@@ -15,9 +15,11 @@ import cv2
 import os
 import sys
 import time
+import json
 import pickle
 import threading
 import logging
+from collections import deque, Counter
 from datetime import datetime
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -62,7 +64,11 @@ class FaceRecognizer:
         # Load LBPH model và label map đã huấn luyện
         self._recognizer = None
         self._label_map: dict = {}
+        self._thresholds: dict = {}
+        self._model_lock = threading.Lock()
         self._load_model()
+
+        self._clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8)) if config.FACE_CLAHE_ENABLE else None
 
         # Tối ưu CPU: giới hạn số thread OpenCV sử dụng
         cv2.setNumThreads(2)
@@ -76,11 +82,30 @@ class FaceRecognizer:
         self._door_cooldown = 10  # Giây giữa 2 lần mở cửa liên tiếp
 
         # Tối ưu CPU: bỏ qua frame (chỉ xử lý 1 trong SKIP_N frame)
-        self._FRAME_SKIP = 2        # xử lý frame 0,2,4,… → ~5 FPS thực tế
+        self._FRAME_SKIP = config.FACE_FRAME_SKIP
         self._frame_counter = 0
+
+        # Temporal smoothing
+        self._recent_predictions = deque(maxlen=config.FACE_SMOOTHING_WINDOW)
+
+        # Face tracker
+        self._tracker = None
+        self._tracker_frame_count = 0
 
         # Tham chiếu đến VideoCapture để WebApp dùng lại stream
         self._cap: cv2.VideoCapture = None
+        self._frame_lock = threading.Lock()
+        self._latest_frame = None
+        self._last_read_warning_ts = 0.0
+        self._status_lock = threading.Lock()
+        self._face_status = {
+            "state": "idle",
+            "message": "Chờ nhận diện...",
+            "person_name": "",
+            "similarity": 0.0,
+            "event_type": "none",
+            "timestamp": None,
+        }
 
     # ------------------------------------------------------------------
     # Load model
@@ -96,19 +121,44 @@ class FaceRecognizer:
         if not os.path.exists(model_path) or not os.path.exists(label_map_path):
             logger.error("[FaceAI] ❌ Model chưa được huấn luyện!")
             logger.error("[FaceAI] Hãy chạy: python ai/face_recognition/face_register.py")
-            return
+            return False
 
         try:
-            self._recognizer = cv2.face.LBPHFaceRecognizer_create()
-            self._recognizer.read(model_path)
+            recognizer = cv2.face.LBPHFaceRecognizer_create()
+            recognizer.read(model_path)
 
             with open(label_map_path, "rb") as f:
-                self._label_map = pickle.load(f)
+                label_map = pickle.load(f)
+
+            thresholds: dict = {}
+            thresholds_path = os.path.join(config.FACE_MODEL_DIR, "face_thresholds.json")
+            if os.path.exists(thresholds_path):
+                try:
+                    with open(thresholds_path, "r", encoding="utf-8") as f:
+                        thresholds = json.load(f)
+                except Exception as e:
+                    logger.warning(f"[FaceAI] Không thể đọc ngưỡng động: {e}")
+
+            with self._model_lock:
+                self._recognizer = recognizer
+                self._label_map = label_map
+                self._thresholds = thresholds
 
             logger.info(f"[FaceAI] ✅ Đã nạp model. Nhận diện {len(self._label_map)} người: {list(self._label_map.values())}")
+            return True
         except Exception as e:
             logger.error(f"[FaceAI] Lỗi nạp model: {e}")
-            self._recognizer = None
+            with self._model_lock:
+                self._recognizer = None
+            return False
+
+    def reload_model(self):
+        """Nạp lại model huấn luyện mới từ đĩa."""
+        ok = self._load_model()
+        if ok:
+            self._reset_smoothing()
+            self._reset_stranger_timer()
+        return ok
 
     # ------------------------------------------------------------------
     # Thread control
@@ -138,6 +188,85 @@ class FaceRecognizer:
         if self._thread:
             self._thread.join(timeout=5)
         logger.info("[FaceAI] 🛑 Thread nhận diện khuôn mặt đã dừng.")
+
+    def _create_tracker(self):
+        tracker_type = str(config.FACE_TRACKER_TYPE).upper()
+        if tracker_type == "CSRT" and hasattr(cv2, "TrackerCSRT_create"):
+            return cv2.TrackerCSRT_create()
+        if tracker_type == "KCF" and hasattr(cv2, "TrackerKCF_create"):
+            return cv2.TrackerKCF_create()
+        if hasattr(cv2, "TrackerCSRT_create"):
+            return cv2.TrackerCSRT_create()
+        if hasattr(cv2, "TrackerKCF_create"):
+            return cv2.TrackerKCF_create()
+        return None
+
+    def _init_tracker(self, frame, box):
+        tracker = self._create_tracker()
+        if tracker is None:
+            self._tracker = None
+            return
+        self._tracker = tracker
+        self._tracker.init(frame, tuple(box))
+        self._tracker_frame_count = 0
+
+    def _get_tracked_face(self, frame):
+        if self._tracker is None:
+            return None
+        ok, box = self._tracker.update(frame)
+        if not ok:
+            self._tracker = None
+            return None
+        x, y, w, h = [int(v) for v in box]
+        return (x, y, w, h)
+
+    def _get_dynamic_threshold(self, person_name: str) -> float:
+        threshold = config.FACE_CONFIDENCE_THRESHOLD
+        stats = self._thresholds.get(person_name)
+        if isinstance(stats, dict):
+            threshold = float(stats.get("recommended_threshold", threshold))
+        threshold = max(config.FACE_THRESHOLD_FLOOR, min(config.FACE_CONFIDENCE_THRESHOLD, threshold))
+        return threshold
+
+    def _get_candidate_threshold(self, person_name: str) -> float:
+        threshold = self._get_dynamic_threshold(person_name)
+        return max(config.FACE_THRESHOLD_FLOOR, threshold - config.FACE_THRESHOLD_MARGIN)
+
+    def _update_smoothing(self, person_name: str, similarity: float):
+        self._recent_predictions.append((person_name, similarity))
+
+    def _reset_smoothing(self):
+        self._recent_predictions.clear()
+
+    def _get_stable_person(self):
+        if len(self._recent_predictions) < config.FACE_SMOOTHING_MIN_COUNT:
+            return None, None
+        names = [name for name, _ in self._recent_predictions]
+        counts = Counter(names)
+        person, count = counts.most_common(1)[0]
+        if person == "Unknown":
+            return None, None
+        ratio = count / len(self._recent_predictions)
+        if ratio < config.FACE_SMOOTHING_MIN_RATIO:
+            return None, None
+        sims = [sim for name, sim in self._recent_predictions if name == person]
+        avg_sim = sum(sims) / len(sims) if sims else 0.0
+        return person, avg_sim
+
+    def _set_face_status(self, state: str, message: str, person_name: str = "", similarity: float = 0.0, event_type: str = "none"):
+        with self._status_lock:
+            self._face_status = {
+                "state": state,
+                "message": message,
+                "person_name": person_name,
+                "similarity": float(similarity),
+                "event_type": event_type,
+                "timestamp": datetime.now().isoformat(timespec="seconds"),
+            }
+
+    def get_status(self):
+        with self._status_lock:
+            return dict(self._face_status)
 
     # ------------------------------------------------------------------
     # Vòng lặp nhận diện chính
@@ -169,9 +298,15 @@ class FaceRecognizer:
         while self._running:
             ret, frame = cap.read()
             if not ret:
-                logger.warning("[FaceAI] Không đọc được frame, bỏ qua...")
+                now = time.time()
+                if now - self._last_read_warning_ts >= 5:
+                    logger.warning("[FaceAI] Không đọc được frame, bỏ qua...")
+                    self._last_read_warning_ts = now
                 time.sleep(0.1)
                 continue
+
+            with self._frame_lock:
+                self._latest_frame = frame.copy()
 
             # ── Frame-skip: chỉ xử lý nhận diện mỗi FRAME_SKIP frame ──
             self._frame_counter += 1
@@ -180,50 +315,96 @@ class FaceRecognizer:
                 time.sleep(0.05)
                 continue
 
-            # ── Xử lý AI trên frame đã thu nhỏ ──
+            # ── Xử lý AI trên frame ──
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            # Equalize histogram để cải thiện nhận diện trong điều kiện ánh sáng yếu
-            gray = cv2.equalizeHist(gray)
-
-            # --- Phát hiện khuôn mặt (minSize cân bằng giữa độ nhạy và nhiễu) ---
-            faces = self._face_cascade.detectMultiScale(
-                gray,
-                scaleFactor=1.1,
-                minNeighbors=4,
-                minSize=(50, 50),
-                flags=cv2.CASCADE_SCALE_IMAGE,
-            )
-
-            if len(faces) == 0:
-                # Không có khuôn mặt → reset bộ đếm người lạ
-                self._reset_stranger_timer()
+            gray = cv2.GaussianBlur(gray, (3, 3), 0)
+            if self._clahe:
+                gray = self._clahe.apply(gray)
             else:
-                for (x, y, w, h) in faces:
-                    face_roi = gray[y:y + h, x:x + w]
-                    face_roi = cv2.resize(face_roi, (160, 160))
+                gray = cv2.equalizeHist(gray)
 
-                    # --- Nhận diện bằng LBPH ---
-                    label_id, confidence = self._recognizer.predict(face_roi)
+            face_box = None
+            self._tracker_frame_count += 1
+            if self._tracker and self._tracker_frame_count % config.FACE_TRACKER_REFRESH != 0:
+                face_box = self._get_tracked_face(frame)
 
-                    # LBPH: confidence THẤP hơn = GIỐNG hơn (0 = hoàn hảo)
-                    similarity = max(0, 1 - (confidence / 100))
-                    is_known = (similarity >= config.FACE_CONFIDENCE_THRESHOLD)
+            if face_box is None:
+                faces = self._face_cascade.detectMultiScale(
+                    gray,
+                    scaleFactor=1.1,
+                    minNeighbors=4,
+                    minSize=(config.FACE_MIN_SIZE, config.FACE_MIN_SIZE),
+                    flags=cv2.CASCADE_SCALE_IMAGE,
+                )
+                if len(faces) > 0:
+                    face_box = max(faces, key=lambda b: b[2] * b[3])
+                    self._init_tracker(frame, face_box)
 
-                    person_name = self._label_map.get(label_id, "Unknown") if is_known else "Unknown"
+            if face_box is None:
+                self._reset_stranger_timer()
+                self._reset_smoothing()
+                self._set_face_status("idle", "Chờ nhận diện...", event_type="idle")
+            else:
+                x, y, w, h = face_box
+                face_roi = gray[y:y + h, x:x + w]
+                face_roi = cv2.resize(face_roi, (160, 160))
 
-                    # --- Vẽ kết quả lên frame ---
-                    color = (0, 255, 0) if is_known else (0, 0, 255)  # Xanh / Đỏ
-                    cv2.rectangle(frame, (x, y), (x + w, y + h), color, 2)
-                    label_text = f"{person_name} ({similarity:.0%})"
-                    cv2.putText(frame, label_text,
-                                (x, y - 8), cv2.FONT_HERSHEY_SIMPLEX,
-                                0.55, color, 1)
+                with self._model_lock:
+                    recognizer = self._recognizer
+                    label_map = dict(self._label_map)
 
-                    # --- Xử lý logic ---
-                    if is_known:
-                        self._handle_known_person(person_name, similarity, frame)
-                    else:
-                        self._handle_stranger(frame, x, y, w, h)
+                if recognizer is None:
+                    self._set_face_status("idle", "Model chưa sẵn sàng...", event_type="idle")
+                    time.sleep(0.2)
+                    continue
+
+                label_id, confidence = recognizer.predict(face_roi)
+                similarity = max(0.0, 1.0 - (confidence / 100.0))
+                person_name = label_map.get(label_id, "Unknown")
+                threshold = self._get_dynamic_threshold(person_name)
+                candidate_threshold = self._get_candidate_threshold(person_name)
+                is_known = similarity >= threshold
+                is_candidate = similarity >= candidate_threshold
+                candidate_name = person_name if is_candidate else "Unknown"
+
+                self._update_smoothing(candidate_name, similarity)
+                stable_person, stable_similarity = self._get_stable_person()
+
+                display_name = stable_person or candidate_name
+                color = (0, 255, 0) if display_name != "Unknown" else (0, 0, 255)
+                cv2.rectangle(frame, (x, y), (x + w, y + h), color, 2)
+                label_text = f"{display_name} ({similarity:.0%})"
+                cv2.putText(frame, label_text,
+                            (x, y - 8), cv2.FONT_HERSHEY_SIMPLEX,
+                            0.55, color, 1)
+
+                if stable_person:
+                    self._set_face_status(
+                        "known",
+                        f"Đã nhận diện: {stable_person}",
+                        person_name=stable_person,
+                        similarity=stable_similarity,
+                        event_type="known",
+                    )
+                    self._handle_known_person(stable_person, stable_similarity, frame)
+                elif candidate_name != "Unknown":
+                    self._reset_stranger_timer()
+                    self._set_face_status(
+                        "candidate",
+                        f"Đang theo dõi: {candidate_name}",
+                        person_name=candidate_name,
+                        similarity=similarity,
+                        event_type="candidate",
+                    )
+                else:
+                    self._set_face_status(
+                        "stranger",
+                        "Phát hiện người lạ",
+                        person_name="Unknown",
+                        similarity=similarity,
+                        event_type="stranger",
+                    )
+                    self._handle_stranger(frame, x, y, w, h)
 
             # ── Tăng sleep để giảm CPU usage (~5 FPS thực tế) ──
             time.sleep(0.2)
@@ -231,6 +412,12 @@ class FaceRecognizer:
         cap.release()
         self._cap = None
         logger.info("[FaceAI] Webcam đã giải phóng.")
+
+    def get_latest_frame(self):
+        with self._frame_lock:
+            if self._latest_frame is None:
+                return None
+            return self._latest_frame.copy()
 
     # ------------------------------------------------------------------
     # Xử lý khuôn mặt hợp lệ (REQ-08)
@@ -247,6 +434,14 @@ class FaceRecognizer:
         """
         # Reset bộ đếm người lạ
         self._reset_stranger_timer()
+
+        self._set_face_status(
+            "known",
+            f"Đã nhận diện: {person_name}",
+            person_name=person_name,
+            similarity=similarity,
+            event_type="known",
+        )
 
         now = time.time()
         # Kiểm tra cooldown: không gửi lệnh mở cửa liên tục trong 10s
@@ -292,6 +487,14 @@ class FaceRecognizer:
             self._stranger_first_seen = now
             self._stranger_alerted = False
             logger.warning("[FaceAI] ⚠️  Phát hiện người lạ! Bắt đầu đếm thời gian...")
+
+        self._set_face_status(
+            "stranger",
+            f"Phát hiện người lạ ({now - self._stranger_first_seen:.1f}s)",
+            person_name="Unknown",
+            similarity=0.0,
+            event_type="stranger",
+        )
 
         elapsed = now - self._stranger_first_seen
 

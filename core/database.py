@@ -210,6 +210,17 @@ class DatabaseSingleton:
                     (time.time(), event_type, person, confidence, img_path)
                 )
 
+    def get_face_events(self, hours: int = 24, limit: int = 20) -> List[Dict]:
+        """Lấy sự kiện khuôn mặt gần nhất trong N giờ."""
+        since = time.time() - hours * 3600
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                "SELECT ts, event_type, person, confidence, img_path, created FROM face_events "
+                "WHERE ts >= ? ORDER BY ts DESC LIMIT ?",
+                (since, limit)
+            ).fetchall()
+        return [dict(r) for r in rows]
+
     # ─────────────────────────── Read ───────────────────────────────────
     def get_sensor_history(self, hours: int = 24, limit: int = 500) -> List[Dict]:
         """

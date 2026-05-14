@@ -55,12 +55,39 @@ GAS_THRESHOLD           = 300      # Ngưỡng khí gas cảnh báo (ppm)
 FACE_DATASET_DIR        = "ai/face_recognition/dataset"
 FACE_MODEL_DIR          = "ai/face_recognition/trained_model"
 FACE_MODEL_FILE         = os.path.join(FACE_MODEL_DIR, "face_model.yml")
-FACE_CONFIDENCE_THRESHOLD = 0.55   # Ngưỡng tin cậy (>= là nhận diện thành công)
+FACE_CONFIDENCE_THRESHOLD = 0.42   # Ngưỡng tin cậy (>= là nhận diện thành công)
 FACE_STRANGER_TIMEOUT   = 10       # Giây liên tục thấy người lạ → cảnh báo REQ-09
 CAMERA_INDEX            = 0        # Index webcam (0 = webcam mặc định)
 CAMERA_FPS              = 30
 FACE_FRAME_WIDTH        = 1280
 FACE_FRAME_HEIGHT       = 720
+FACE_FRAME_SKIP         = 2
+FACE_MIN_SIZE           = 60
+FACE_BLUR_THRESHOLD     = 30.0
+FACE_BRIGHTNESS_MIN     = 35
+FACE_BRIGHTNESS_MAX     = 230
+FACE_CAPTURE_COOLDOWN   = 0.2
+FACE_ALIGN_ENABLE       = True
+FACE_CLAHE_ENABLE       = True
+FACE_SMOOTHING_WINDOW   = 9
+FACE_SMOOTHING_MIN_RATIO = 0.45
+FACE_SMOOTHING_MIN_COUNT = 4
+FACE_THRESHOLD_FLOOR     = 0.30
+FACE_THRESHOLD_MARGIN    = 0.08
+FACE_THRESHOLD_STD_MULTIPLIER = 1.5
+FACE_TRACKER_TYPE       = "CSRT"
+FACE_TRACKER_REFRESH    = 15
+FACE_VAL_SPLIT          = 0.2
+FACE_MIN_IMAGES_PER_PERSON = 80
+FACE_AUGMENT_ENABLED    = True
+FACE_AUGMENT_MAX_PER_IMAGE = 3
+FACE_AUGMENT_ROTATE_DEG = 10
+FACE_AUGMENT_BRIGHTNESS_RANGE = (0.8, 1.2)
+FACE_AUGMENT_CONTRAST_RANGE   = (0.8, 1.2)
+FACE_AUGMENT_NOISE_STD = 5.0
+FACE_AUGMENT_ZOOM_RANGE = (0.9, 1.1)
+FACE_AUGMENT_OCCLUSION_PROB = 0.3
+FACE_AUGMENT_OCCLUSION_AREA = (0.15, 0.3)
 
 # ============================================================
 # VOICE CONTROL CONFIGURATION

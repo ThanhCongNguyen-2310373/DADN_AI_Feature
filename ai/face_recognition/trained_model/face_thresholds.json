@@ -1,0 +1,14 @@
+{
+  "Bame": {
+    "mean_similarity": 0.8790453648184446,
+    "std_similarity": 0.20992575617326692,
+    "recommended_threshold": 0.33999999999999997,
+    "samples": 16
+  },
+  "Cong": {
+    "mean_similarity": 0.7435516054943905,
+    "std_similarity": 0.22620384616863337,
+    "recommended_threshold": 0.33999999999999997,
+    "samples": 16
+  }
+}

@@ -199,6 +199,14 @@ class PostgreSQLDatabase:
             (time.time(), event_type, person, confidence, img_path),
         )
 
+    def get_face_events(self, hours: int = 24, limit: int = 20) -> List[Dict[str, Any]]:
+        since = time.time() - hours * 3600
+        return self._query(
+            "SELECT ts, event_type, person, confidence, img_path, created FROM face_events WHERE ts >= %s ORDER BY ts DESC LIMIT %s",
+            (since, limit),
+            fetch="all",
+        )
+
     def get_sensor_history(self, hours: int = 24, limit: int = 500) -> List[Dict[str, Any]]:
         since = time.time() - hours * 3600
         return self._query(

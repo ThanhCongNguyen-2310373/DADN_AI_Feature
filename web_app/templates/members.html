@@ -32,8 +32,20 @@
     <section class="card" style="margin-bottom:20px">
       <h2 class="card-title"><i class="fas fa-user-plus"></i> Đăng ký khuôn mặt mới</h2>
       <p style="font-size:.85rem;color:var(--text-dim);margin-bottom:16px">
-        Camera sẽ tự động chụp ảnh khi phát hiện khuôn mặt. Đảm bảo đứng trước webcam khi nhấn bắt đầu.
+        Camera sẽ tự động chụp ảnh khi chất lượng đạt chuẩn. Hãy theo hướng dẫn hiển thị trong cửa sổ camera.
       </p>
+      <div style="background:var(--surface2);border:1px solid #30363d;border-radius:10px;padding:12px 14px;margin-bottom:16px">
+        <div style="font-weight:600;margin-bottom:6px"><i class="fas fa-list-check"></i> Hướng dẫn thu thập</div>
+        <ul style="margin:0;padding-left:18px;color:var(--text-dim);font-size:.82rem;line-height:1.6">
+          <li>Quay mặt trái/phải 15-30 độ, nhìn lên/xuống nhẹ.</li>
+          <li>Thay đổi khoảng cách gần/xa, biểu cảm bình thường và cười nhẹ.</li>
+          <li>Che mặt nhẹ (tay/khẩu trang/kính/tóc) để tăng độ bền vững.</li>
+          <li>Ảnh bị nhòe, quá tối/sáng hoặc khuôn mặt quá nhỏ sẽ bị loại.</li>
+        </ul>
+        <div style="margin-top:8px;color:var(--text-dim);font-size:.78rem">
+          Phím nhanh trong cửa sổ camera: <strong>A</strong> auto | <strong>P</strong> tạm dừng | <strong>S</strong> bỏ qua | <strong>SPACE</strong> chụp tay | <strong>Q</strong> huỷ
+        </div>
+      </div>
       <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">
         <div style="display:flex;flex-direction:column;gap:6px;flex:1;min-width:180px">
           <label style="font-size:.82rem;color:var(--text-dim)">Tên thành viên</label>
@@ -43,36 +55,92 @@
         </div>
         <div style="display:flex;flex-direction:column;gap:6px">
           <label style="font-size:.82rem;color:var(--text-dim)">Số ảnh</label>
-          <input id="inp-samples" type="number" value="30" min="10" max="80"
+          <input id="inp-samples" type="number" value="80" min="80" max="200" step="10"
                  style="background:var(--surface2);border:1px solid #30363d;border-radius:8px;
                         padding:10px 14px;color:var(--text);font-size:.95rem;width:90px;outline:none" />
+          <span style="font-size:.72rem;color:var(--text-dim)">Khuyến nghị 80-120 ảnh/người</span>
         </div>
         <button onclick="startEnroll()" id="btn-enroll"
                 style="background:var(--accent);color:#0d1117;border:none;border-radius:8px;
                        padding:10px 20px;font-weight:600;cursor:pointer;white-space:nowrap">
           <i class="fas fa-camera"></i> Bắt đầu chụp
         </button>
-        <button onclick="trainModel()" id="btn-train"
-                style="background:var(--accent2);color:#0d1117;border:none;border-radius:8px;
-                       padding:10px 20px;font-weight:600;cursor:pointer;white-space:nowrap">
-          <i class="fas fa-brain"></i> Train model
-        </button>
       </div>
       <div id="enroll-status" style="margin-top:12px;font-size:.85rem;color:var(--text-dim)"></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
+        <button onclick="pauseEnroll()" id="btn-pause"
+                style="background:var(--surface2);color:var(--text);border:1px solid #30363d;border-radius:8px;
+                       padding:8px 14px;font-weight:600;cursor:pointer">
+          <i class="fas fa-pause"></i> Tạm dừng
+        </button>
+        <button onclick="resumeEnroll()" id="btn-resume"
+                style="background:var(--surface2);color:var(--text);border:1px solid #30363d;border-radius:8px;
+                       padding:8px 14px;font-weight:600;cursor:pointer">
+          <i class="fas fa-play"></i> Tiếp tục
+        </button>
+        <button onclick="cancelEnroll()" id="btn-cancel"
+                style="background:#f85149;color:#fff;border:none;border-radius:8px;
+                       padding:8px 14px;font-weight:600;cursor:pointer">
+          <i class="fas fa-stop"></i> Huỷ phiên
+        </button>
+      </div>
+
+      <div style="margin-top:18px;padding:14px;border-radius:10px;background:var(--surface2);border:1px solid #30363d">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px">
+          <div>
+            <div style="font-weight:700"><i class="fas fa-gears"></i> Huấn luyện model</div>
+            <div style="font-size:.8rem;color:var(--text-dim)">Có thể train toàn bộ dataset hoặc chỉ những thành viên bạn chọn bên dưới.</div>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button onclick="selectAllMembers(true)" style="background:transparent;border:1px solid #30363d;color:var(--text);border-radius:8px;padding:7px 12px;cursor:pointer">
+              Chọn tất cả
+            </button>
+            <button onclick="selectAllMembers(false)" style="background:transparent;border:1px solid #30363d;color:var(--text);border-radius:8px;padding:7px 12px;cursor:pointer">
+              Bỏ chọn
+            </button>
+          </div>
+        </div>
+        <div id="train-selected-count" style="font-size:.8rem;color:var(--text-dim);margin-bottom:8px">0/0 thành viên được chọn</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+          <button onclick="startTrain('all')" id="btn-train-all"
+                  style="background:var(--accent);color:#0d1117;border:none;border-radius:8px;padding:10px 16px;font-weight:700;cursor:pointer">
+            <i class="fas fa-brain"></i> Train toàn bộ
+          </button>
+          <button onclick="startTrain('selected')" id="btn-train-selected"
+                  style="background:var(--accent2);color:#0d1117;border:none;border-radius:8px;padding:10px 16px;font-weight:700;cursor:pointer">
+            <i class="fas fa-filter"></i> Train phần chọn
+          </button>
+        </div>
+        <div id="train-status" style="font-size:.85rem;color:var(--text-dim);line-height:1.6"></div>
+        <div style="margin-top:10px;height:12px;border-radius:999px;background:#222;border:1px solid #30363d;overflow:hidden">
+          <div id="train-progress-fill" style="width:0%;height:100%;background:linear-gradient(90deg,var(--accent),var(--accent2));transition:width .25s ease"></div>
+        </div>
+        <div id="train-progress-label" style="margin-top:6px;font-size:.78rem;color:var(--text-dim)">Chưa bắt đầu train.</div>
+      </div>
     </section>
 
     <!-- ── Camera preview ── -->
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
       <section class="card">
         <h2 class="card-title"><i class="fas fa-camera"></i> Camera Preview</h2>
-        <div style="background:#000;border-radius:8px;overflow:hidden;aspect-ratio:4/3">
+        <div style="position:relative;background:#000;border-radius:8px;overflow:hidden;aspect-ratio:16/9">
           <img src="/video_feed" style="width:100%;height:100%;object-fit:cover" alt="camera" />
+          <div id="preview-overlay"
+               style="position:absolute;left:12px;top:12px;max-width:min(90%,360px);padding:12px 14px;
+                      border-radius:10px;background:rgba(13,17,23,.72);border:1px solid rgba(240,136,62,.35);
+                      color:#fff;font-size:.78rem;line-height:1.5;backdrop-filter:blur(6px)">
+            <div style="font-weight:700;margin-bottom:4px"><i class="fas fa-camera-retro"></i> Trạng thái chụp</div>
+            <div>Chưa bắt đầu phiên chụp.</div>
+          </div>
         </div>
       </section>
 
       <!-- ── Danh sách thành viên ── -->
       <section class="card">
         <h2 class="card-title"><i class="fas fa-users"></i> Thành viên đã đăng ký</h2>
+        <div style="margin-bottom:10px;color:var(--text-dim);font-size:.82rem">
+          Tích chọn những thư mục muốn đưa vào lần train tiếp theo. Nếu muốn loại dữ liệu cũ như <strong>Congg</strong>, chỉ cần bỏ chọn nó trước khi train.
+        </div>
         <div id="members-list" style="display:flex;flex-direction:column;gap:8px"></div>
       </section>
     </div>
@@ -80,36 +148,232 @@
   </main>
 
   <script>
+    let enrollPollTimer = null;
+    let trainPollTimer = null;
+    let memberCache = [];
+
+    function setTrainButtonsDisabled(disabled) {
+      document.getElementById('btn-train-all').disabled = disabled;
+      document.getElementById('btn-train-selected').disabled = disabled;
+    }
+
+    function selectAllMembers(checked) {
+      document.querySelectorAll('.train-member-check').forEach(cb => {
+        cb.checked = checked;
+      });
+      renderTrainMemberCount();
+    }
+
+    function renderTrainMemberCount() {
+      const checked = document.querySelectorAll('.train-member-check:checked').length;
+      const total = document.querySelectorAll('.train-member-check').length;
+      const countEl = document.getElementById('train-selected-count');
+      if (countEl) {
+        countEl.textContent = `${checked}/${total} thành viên được chọn`;
+      }
+    }
+
+    function renderTrainStatus(data) {
+      const statusEl = document.getElementById('train-status');
+      const progressFill = document.getElementById('train-progress-fill');
+      const progressLabel = document.getElementById('train-progress-label');
+      if (!statusEl || !progressFill || !progressLabel) return;
+
+      const progress = Math.max(0, Math.min(100, Number(data.progress || 0)));
+      const selected = Array.isArray(data.selected_members) ? data.selected_members : [];
+      const selectedText = selected.length ? selected.join(', ') : 'Tất cả';
+      const current = data.current_person || '-';
+      const accuracy = typeof data.accuracy === 'number' && data.accuracy > 0
+        ? ` | Accuracy: ${(data.accuracy * 100).toFixed(1)}%`
+        : '';
+
+      progressFill.style.width = `${progress}%`;
+      progressLabel.textContent = `${data.stage || data.status || 'idle'} · ${progress.toFixed(0)}%`;
+      statusEl.innerHTML = `
+        <div><strong>Trạng thái:</strong> ${data.status || 'idle'}</div>
+        <div><strong>Thông báo:</strong> ${data.message || 'Chưa bắt đầu train.'}</div>
+        <div><strong>Nhóm train:</strong> ${selectedText}</div>
+        <div><strong>Đang xử lý:</strong> ${current}</div>
+        <div><strong>Tiến độ:</strong> ${progress.toFixed(0)}%${accuracy}</div>
+        <div><strong>Ảnh đã nạp:</strong> ${data.trained_images || 0} | <strong>Người đã nạp:</strong> ${(data.processed_people || 0)}/${(data.total_people || 0)}</div>
+        ${data.finished_at ? `<div><strong>Kết thúc:</strong> ${data.finished_at}</div>` : ''}
+      `;
+
+      const isActive = data.status === 'running';
+      setTrainButtonsDisabled(isActive);
+    }
+
+    async function pollTrainStatus() {
+      try {
+        const resp = await fetch('/api/face/train/status');
+        const data = await resp.json();
+        renderTrainStatus(data);
+        renderTrainMemberCount();
+        if (data.status === 'running' && !trainPollTimer) {
+          trainPollTimer = setInterval(pollTrainStatus, 1000);
+        }
+        if (['completed', 'cancelled', 'error'].includes(data.status)) {
+          if (trainPollTimer) {
+            clearInterval(trainPollTimer);
+            trainPollTimer = null;
+          }
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    function renderEnrollStatus(data) {
+      const statusEl = document.getElementById('enroll-status');
+      const previewOverlay = document.getElementById('preview-overlay');
+      const captured = data.captured || 0;
+      const remaining = data.remaining || 0;
+      const stage = data.stage_text || 'Đang chờ...';
+      const quality = data.quality_ok ? 'Đạt' : 'Chưa đạt';
+      const reasons = (data.reasons || []).join(', ');
+      const msg = data.message || '';
+
+      statusEl.innerHTML = `
+        <div style="display:flex;flex-direction:column;gap:6px">
+          <div><strong>Trạng thái:</strong> ${data.status || 'idle'}</div>
+          <div><strong>Đã chụp:</strong> ${captured} | <strong>Còn lại:</strong> ${remaining}</div>
+          <div><strong>Bước hiện tại:</strong> ${stage}</div>
+          <div><strong>Chất lượng:</strong> ${quality}${reasons ? ` (${reasons})` : ''}</div>
+          <div><strong>Thông báo:</strong> ${msg || 'Không có'}</div>
+        </div>`;
+
+      if (previewOverlay) {
+        previewOverlay.innerHTML = `
+          <div style="font-weight:700;margin-bottom:4px"><i class="fas fa-camera-retro"></i> Trạng thái chụp</div>
+          <div><strong>Phiên:</strong> ${data.status || 'idle'}</div>
+          <div><strong>Đã chụp:</strong> ${captured} | <strong>Còn lại:</strong> ${remaining}</div>
+          <div><strong>Bước:</strong> ${stage}</div>
+          <div><strong>Chất lượng:</strong> ${quality}</div>
+          <div><strong>Thông báo:</strong> ${msg || 'Không có'}</div>
+        `;
+      }
+
+      const isActive = ['running', 'paused'].includes(data.status);
+      document.getElementById('btn-enroll').disabled = isActive;
+      document.getElementById('btn-pause').disabled = data.status !== 'running';
+      document.getElementById('btn-resume').disabled = data.status !== 'paused';
+      document.getElementById('btn-cancel').disabled = !isActive;
+    }
+
+    async function pollEnrollStatus() {
+      try {
+        const resp = await fetch('/api/face/enroll/status');
+        const data = await resp.json();
+        renderEnrollStatus(data);
+        if (['completed', 'cancelled', 'error'].includes(data.status)) {
+          if (enrollPollTimer) {
+            clearInterval(enrollPollTimer);
+            enrollPollTimer = null;
+          }
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    async function pauseEnroll() {
+      await fetch('/api/face/enroll/pause', { method: 'POST' });
+      pollEnrollStatus();
+    }
+
+    async function resumeEnroll() {
+      await fetch('/api/face/enroll/resume', { method: 'POST' });
+      pollEnrollStatus();
+    }
+
+    async function cancelEnroll() {
+      await fetch('/api/face/enroll/cancel', { method: 'POST' });
+      pollEnrollStatus();
+    }
+
     async function loadMembers() {
       try {
         const resp = await fetch('/api/face/members');
         const data = await resp.json();
+        memberCache = data.members || [];
         const list = document.getElementById('members-list');
-        if (!data.members || data.members.length === 0) {
+        if (!memberCache.length) {
           list.innerHTML = '<p style="color:var(--text-dim);font-size:.85rem">Chưa có thành viên nào.</p>';
+          renderTrainMemberCount();
           return;
         }
-        list.innerHTML = data.members.map(m => `
-          <div style="display:flex;align-items:center;justify-content:space-between;
+        list.innerHTML = memberCache.map(m => {
+          const ok = (m.samples || 0) >= 80;
+          const badge = ok
+            ? '<span style="font-size:.72rem;color:#3fb950">Đủ mẫu</span>'
+            : '<span style="font-size:.72rem;color:#f0883e">Chưa đủ mẫu</span>';
+          return `
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;
                       background:var(--surface2);border-radius:8px;padding:10px 14px">
-            <div>
-              <i class="fas fa-user-circle" style="color:var(--accent)"></i>
-              <strong style="margin-left:8px">${m.name}</strong>
+            <label style="display:flex;align-items:center;gap:10px;cursor:pointer;flex:1">
+              <input class="train-member-check" type="checkbox" value="${m.name}" checked onchange="renderTrainMemberCount()" />
+              <div>
+                <i class="fas fa-user-circle" style="color:var(--accent)"></i>
+                <strong style="margin-left:8px">${m.name}</strong>
+              </div>
+            </label>
+            <div style="display:flex;gap:8px;align-items:center;white-space:nowrap">
+              ${badge}
+              <span style="font-size:.78rem;color:var(--text-dim)">${m.samples} ảnh</span>
             </div>
-            <span style="font-size:.78rem;color:var(--text-dim)">${m.samples} ảnh</span>
-          </div>`).join('');
+          </div>`;
+        }).join('');
+        renderTrainMemberCount();
       } catch(e) { console.error(e); }
+    }
+
+    async function startTrain(mode) {
+      const statusEl = document.getElementById('train-status');
+      const selectedMembers = Array.from(document.querySelectorAll('.train-member-check:checked')).map(cb => cb.value);
+      const payload = {
+        mode,
+        selected_members: mode === 'selected' ? selectedMembers : [],
+      };
+
+      if (mode === 'selected' && selectedMembers.length === 0) {
+        statusEl.textContent = '⚠️ Hãy chọn ít nhất một thành viên trước khi train phần chọn.';
+        return;
+      }
+
+      setTrainButtonsDisabled(true);
+      statusEl.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Đang gửi yêu cầu train...';
+
+      try {
+        const resp = await fetch('/api/face/train', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const data = await resp.json();
+        if (resp.ok) {
+          statusEl.innerHTML = '✅ Job train đã được khởi chạy. Theo dõi tiến trình bên dưới.';
+          if (trainPollTimer) clearInterval(trainPollTimer);
+          trainPollTimer = setInterval(pollTrainStatus, 1000);
+          pollTrainStatus();
+        } else {
+          statusEl.textContent = `❌ Lỗi: ${data.detail || JSON.stringify(data)}`;
+          setTrainButtonsDisabled(false);
+        }
+      } catch (e) {
+        statusEl.textContent = `❌ Lỗi kết nối: ${e}`;
+        setTrainButtonsDisabled(false);
+      }
     }
 
     async function startEnroll() {
       const name    = document.getElementById('inp-name').value.trim();
-      const samples = parseInt(document.getElementById('inp-samples').value) || 30;
+      const samples = parseInt(document.getElementById('inp-samples').value) || 80;
       const statusEl = document.getElementById('enroll-status');
 
       if (!name) { statusEl.textContent = '⚠️ Hãy nhập tên thành viên.'; return; }
 
       document.getElementById('btn-enroll').disabled = true;
-      statusEl.innerHTML = `<i class="fas fa-spinner fa-spin"></i> Đang chụp ${samples} ảnh cho <strong>${name}</strong>...`;
+      statusEl.innerHTML = `<i class="fas fa-spinner fa-spin"></i> Đang chụp ${samples} ảnh cho <strong>${name}</strong>. Vui lòng theo hướng dẫn trong cửa sổ camera...`;
 
       try {
         const resp = await fetch('/api/face/enroll', {
@@ -119,8 +383,10 @@
         });
         const data = await resp.json();
         if (resp.ok) {
-          statusEl.innerHTML = `✅ Đang chụp ảnh trong nền. Khi xong, nhấn <strong>Train model</strong>.`;
-          // Cập nhật danh sách sau 5 giây
+          statusEl.innerHTML = `✅ Phiên chụp đã bắt đầu. Theo dõi tiến trình bên dưới và giữ camera đúng hướng dẫn.`;
+          if (enrollPollTimer) clearInterval(enrollPollTimer);
+          enrollPollTimer = setInterval(pollEnrollStatus, 1000);
+          pollEnrollStatus();
           setTimeout(loadMembers, 5000);
         } else {
           statusEl.textContent = `❌ Lỗi: ${data.detail}`;
@@ -128,27 +394,11 @@
       } catch(e) {
         statusEl.textContent = `❌ Lỗi kết nối: ${e}`;
       }
-      setTimeout(() => { document.getElementById('btn-enroll').disabled = false; }, 3000);
-    }
-
-    async function trainModel() {
-      const statusEl = document.getElementById('enroll-status');
-      document.getElementById('btn-train').disabled = true;
-      statusEl.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Đang train lại LBPH model...';
-
-      try {
-        const resp = await fetch('/api/face/train', { method: 'POST' });
-        const data = await resp.json();
-        statusEl.textContent = data.status === 'training_started'
-          ? '✅ Model đang được train trong nền. Hệ thống sẽ tự động reload.'
-          : `❌ Lỗi: ${JSON.stringify(data)}`;
-      } catch(e) {
-        statusEl.textContent = `❌ Lỗi: ${e}`;
-      }
-      setTimeout(() => { document.getElementById('btn-train').disabled = false; }, 5000);
     }
 
     loadMembers();
+    pollEnrollStatus();
+    pollTrainStatus();
   </script>
 </body>
 </html>

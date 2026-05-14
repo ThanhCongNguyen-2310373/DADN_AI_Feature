@@ -12,9 +12,11 @@ const SENSOR_THRESHOLDS = {
 
 const POLL_CHAT_MS = 4000; // poll chat history mỗi 4 giây
 const POLL_FACELOG_MS = 8000; // poll face log mỗi 8 giây
+const POLL_FACESTATUS_MS = 2000; // poll face status mỗi 2 giây
 const WS_RECONNECT_MS = 5000; // thử reconnect WebSocket sau 5 giây
 
 let ws = null;
+let _lastFaceStatusKey = "";
 
 // ── DOM helpers ──
 const el = (id) => document.getElementById(id);
@@ -199,6 +201,91 @@ async function pollFaceLog() {
     }
 }
 
+async function pollFaceStatus() {
+    try {
+        const resp = await fetch("/api/face/status");
+        const data = await resp.json();
+        renderFaceStatus(data);
+    } catch (e) {
+        /* silent */
+    }
+}
+
+function renderFaceStatus(data) {
+    const box = el("face-status");
+    if (!box) return;
+
+    const state = data.state || "idle";
+    const person = data.person_name || "";
+    const similarity = typeof data.similarity === "number" ? Math.round(data.similarity * 100) : 0;
+    const message = data.message || "Chờ nhận diện...";
+    const ts = data.timestamp ? ` · ${data.timestamp}` : "";
+
+    let badgeLabel = "Chờ nhận diện";
+    let badgeClass = "face-neutral";
+    if (state === "known") {
+        badgeLabel = "Đã nhận diện";
+        badgeClass = "face-known";
+    } else if (state === "candidate") {
+        badgeLabel = "Đang theo dõi";
+        badgeClass = "face-candidate";
+    } else if (state === "stranger") {
+        badgeLabel = "Người lạ";
+        badgeClass = "face-stranger";
+    }
+
+    box.className = `face-status ${badgeClass}`;
+    box.innerHTML = `
+      <div style="display:flex;flex-direction:column;gap:4px">
+        <div><strong>${badgeLabel}</strong>${ts}</div>
+        <div>${message}</div>
+        <div>${person ? `Người: <strong>${escapeHtml(person)}</strong>` : "Người: -"}</div>
+        <div>${similarity ? `Độ tin cậy: <strong>${similarity}%</strong>` : ""}</div>
+      </div>`;
+
+        const faceKey = `${state}|${person}|${data.timestamp || ""}`;
+        if (state === "known" && person && faceKey !== _lastFaceStatusKey) {
+            showToast(`Đã nhận diện ${person}`, `Độ tin cậy ${similarity}%`, "success");
+            showFaceModal(`Đã nhận diện ${person}`, `Độ tin cậy ${similarity}%`);
+        }
+        _lastFaceStatusKey = faceKey;
+}
+
+    // Prominent face modal (large notification)
+    function showFaceModal(title, detail = '', timeout = 6000) {
+        const modal = el('face-modal');
+        if (!modal) return;
+        const nameEl = el('face-modal-name');
+        const titleEl = el('face-modal-title');
+        const detailEl = el('face-modal-detail');
+        const imgEl = el('face-modal-img');
+
+        if (nameEl) nameEl.textContent = title.replace(/^Đã nhận diện\s*/, '');
+        if (detailEl) detailEl.textContent = detail;
+        if (imgEl) imgEl.innerHTML = '<i class="fas fa-user-circle"></i>';
+
+        modal.classList.add('show');
+        modal.setAttribute('aria-hidden', 'false');
+
+        // auto hide
+        if (modal._hideTimer) clearTimeout(modal._hideTimer);
+        modal._hideTimer = setTimeout(() => hideFaceModal(), timeout);
+    }
+
+    function hideFaceModal() {
+        const modal = el('face-modal');
+        if (!modal) return;
+        modal.classList.remove('show');
+        modal.setAttribute('aria-hidden', 'true');
+        if (modal._hideTimer) { clearTimeout(modal._hideTimer); modal._hideTimer = null; }
+    }
+
+    // wire close button
+    document.addEventListener('click', (ev) => {
+        const btn = ev.target && ev.target.id === 'face-modal-close';
+        if (btn) hideFaceModal();
+    });
+
 function renderFaceLog(events) {
     const list = el("face-log-list");
     if (events.length === 0) {
@@ -207,15 +294,51 @@ function renderFaceLog(events) {
         return;
     }
     list.innerHTML = events
-        .map(
-            (ev) => `
+        .map((ev) => {
+            const title = ev.event_type === "known"
+                ? `Đã nhận diện: ${escapeHtml(ev.person || "")}`
+                : ev.event_type === "stranger"
+                    ? "Người lạ"
+                    : "Sự kiện khuôn mặt";
+            const confidence = typeof ev.confidence === "number" && ev.confidence > 0
+                ? `<div class="log-item-meta">Tin cậy: ${Math.round(ev.confidence * 100)}%</div>`
+                : "";
+            const img = ev.url
+                ? `<img src="${ev.url}" alt="face log" loading="lazy" onerror="this.src='/static/img/no_camera.svg'" />`
+                : `<div class="log-item-fallback"><i class="fas fa-user"></i></div>`;
+            return `
     <div class="log-item" title="${ev.time}">
-      <img src="${ev.url}" alt="face log" loading="lazy"
-           onerror="this.src='/static/img/no_camera.svg'" />
+      ${img}
       <div class="log-item-time">${ev.time}</div>
-    </div>`,
-        )
+      <div class="log-item-name">${title}</div>
+      ${confidence}
+    </div>`;
+        })
         .join("");
+}
+
+function showToast(title, detail = "", type = "success") {
+    let container = document.getElementById("toast-container");
+    if (!container) {
+        container = document.createElement("div");
+        container.id = "toast-container";
+        container.className = "toast-container";
+        document.body.appendChild(container);
+    }
+
+    const toast = document.createElement("div");
+    toast.className = `toast toast-${type}`;
+    toast.innerHTML = `
+      <div class="toast-title">${escapeHtml(title)}</div>
+      ${detail ? `<div class="toast-detail">${escapeHtml(detail)}</div>` : ""}
+    `;
+    container.appendChild(toast);
+
+    requestAnimationFrame(() => toast.classList.add("show"));
+    setTimeout(() => {
+        toast.classList.remove("show");
+        setTimeout(() => toast.remove(), 220);
+    }, 3200);
 }
 
 // ── REST fallback polling (khi WS không khả dụng) ──
@@ -375,10 +498,12 @@ connectWebSocket();
 setInterval(pollSensors, 10000);
 setInterval(pollChat, POLL_CHAT_MS);
 setInterval(pollFaceLog, POLL_FACELOG_MS);
+setInterval(pollFaceStatus, POLL_FACESTATUS_MS);
 setInterval(pollEnergy, 30_000);
 
 // Khởi tạo ngay
 pollChat();
 pollFaceLog();
+pollFaceStatus();
 initSensorChart();
 pollEnergy();

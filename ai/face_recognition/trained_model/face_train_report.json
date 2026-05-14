@@ -1,0 +1,21 @@
+{
+  "total": 32,
+  "correct": 32,
+  "accuracy": 1.0,
+  "per_person": {
+    "Bame": {
+      "total": 16,
+      "correct": 16,
+      "accuracy": 1.0,
+      "similarity_mean": 0.8790453648184446,
+      "similarity_std": 0.20992575617326692
+    },
+    "Cong": {
+      "total": 16,
+      "correct": 16,
+      "accuracy": 1.0,
+      "similarity_mean": 0.7435516054943905,
+      "similarity_std": 0.22620384616863337
+    }
+  }
+}
