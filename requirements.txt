@@ -17,6 +17,9 @@ SpeechRecognition==3.10.1   # STT - Google Web Speech API
 gTTS==2.5.1                 # TTS - Google Text-to-Speech
 pygame==2.6.1               # Phát âm thanh TTS
 PyAudio==0.2.14; platform_system == "Windows"  # Microphone input (CI Linux không cần)
+webrtcvad==2.0.10           # VAD trước STT (có wheel trên nhiều bản Python; Py3.13 có thể cần build)
+pyrnnoise>=0.3.0            # RNNoise (tuỳ chọn; bỏ qua nếu không cài)
+fasttext-wheel==0.9.2       # Phân loại ý định (tuỳ chọn; fallback BoW trong code nếu lỗi)
 
 # --- AI / RAG (Tùy chọn - bật GeminiRAGAssistant) ---
 langchain==1.3.0            # LLM orchestration framework

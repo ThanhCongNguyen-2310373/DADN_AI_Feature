@@ -19,6 +19,8 @@ SMOKE_FILES = [
     "core/ml_analytics.py",
     "sensors/sensor_reader.py",
     "ai/voice_control/voice_assistant.py",
+    "ai/voice_control/audio_preprocess.py",
+    "ai/voice_control/intent_nlp.py",
     "web_app/app.py",
 ]
 

@@ -53,6 +53,15 @@ def _bootstrap_app(tmp_path: Path):
         def _answer_weather(self, q: str):
             return f"WEATHER:{q}"
 
+        def handle_user_text(self, text: str, speak: bool = False) -> str:
+            tl = text.lower()
+            if any(
+                kw in tl
+                for kw in ["thời tiết", "thoi tiet", "trời", "mưa", "nắng", "weather"]
+            ):
+                return self._answer_weather(text)
+            return self._ask_rag(text)
+
     app_module.inject_modules(
         sensor_reader=FakeSensorReader(),
         voice_assistant=FakeVoiceAssistant(),

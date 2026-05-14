@@ -545,7 +545,6 @@ def _get_face_log() -> List[Dict]:
         entries.append({
             "event_type": row.get("event_type", ""),
             "person": row.get("person") or "",
-            "confidence": row.get("confidence"),
             "time": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(float(row.get("ts", 0) or 0))),
             "url": url,
             "filename": os.path.basename(img_path) if img_path else "",
@@ -563,7 +562,6 @@ def _get_face_status() -> Dict[str, Any]:
         "state": "idle",
         "message": "Chờ nhận diện...",
         "person_name": "",
-        "similarity": 0.0,
         "event_type": "none",
         "timestamp": None,
     }
@@ -753,7 +751,7 @@ async def update_user_role(user_id: int, req: UserRoleUpdate, _=Depends(require_
 
 @app.post("/api/voice/ask", tags=["AI Features"],
           summary="Hỏi đáp AI qua HTTP",
-          description="API hỏi đáp không cần microphone; dùng chung logic với Voice Assistant.")
+          description="API hỏi đáp không cần microphone; dùng chung logic NLP với Voice Assistant.")
 async def voice_ask(req: VoiceAskRequest, _=Depends(require_auth)):
     if _voice_assistant is None:
         return JSONResponse({"answer": "Voice Assistant chưa được khởi động."})
@@ -762,14 +760,17 @@ async def voice_ask(req: VoiceAskRequest, _=Depends(require_auth)):
         if not text:
             raise HTTPException(status_code=400, detail="Question rỗng")
 
-        if hasattr(_voice_assistant, "_answer_weather") and any(
-            kw in text.lower() for kw in ["thời tiết", "thoi tiet", "trời", "mưa", "nắng", "weather"]
-        ):
-            ans = _voice_assistant._answer_weather(text)
-        elif hasattr(_voice_assistant, "_ask_rag"):
-            ans = _voice_assistant._ask_rag(text)
+        if hasattr(_voice_assistant, "handle_user_text"):
+            ans = _voice_assistant.handle_user_text(text, speak=False)
         else:
-            ans = "Voice Assistant không hỗ trợ ask API ở phiên bản hiện tại."
+            if hasattr(_voice_assistant, "_answer_weather") and any(
+                kw in text.lower() for kw in ["thời tiết", "thoi tiet", "trời", "mưa", "nắng", "weather"]
+            ):
+                ans = _voice_assistant._answer_weather(text)
+            elif hasattr(_voice_assistant, "_ask_rag"):
+                ans = _voice_assistant._ask_rag(text)
+            else:
+                ans = "Voice Assistant không hỗ trợ ask API ở phiên bản hiện tại."
         return JSONResponse({"answer": ans})
     except HTTPException:
         raise

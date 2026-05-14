@@ -1,0 +1,43 @@
+__label__control_device yolo bật đèn
+__label__control_device yolo ơi bật đèn giúp mình
+__label__control_device bật đèn đi
+__label__control_device mở đèn
+__label__control_device khởi động đèn led
+__label__control_device yolo tắt đèn
+__label__control_device đóng đèn
+__label__control_device tắt đèn phòng khách
+__label__control_device yolo bật quạt
+__label__control_device mở quạt lên
+__label__control_device bật máy quạt
+__label__control_device yolo tắt quạt
+__label__control_device ngắt quạt
+__label__control_device yolo bật máy bơm
+__label__control_device tưới cây đi
+__label__control_device bật bơm nước
+__label__control_device yolo tắt máy bơm
+__label__control_device yolo mở cửa
+__label__control_device đóng cửa lại
+__label__control_device yolo tắt nó
+__label__control_device bật nó đi
+__label__control_device tắt cái đó
+__label__control_device bật cái đó
+__label__question nhiệt độ bao nhiêu là an toàn
+__label__question độ ẩm trong nhà như thế nào là ổn
+__label__question khí gas rò rỉ thì xử lý sao
+__label__question tiết kiệm điện thế nào
+__label__question yolo hướng dẫn dùng hệ thống
+__label__question cảnh báo gas hoạt động ra sao
+__label__question cho biết ngưỡng nhiệt
+__label__question tại sao phải thông gió
+__label__question là gì nhà thông minh
+__label__question giải thích yolohome
+__label__question có thể bật đèn bằng app không
+__label__weather hôm nay trời mưa không
+__label__weather thời tiết tp hcm thế nào
+__label__weather nhiệt độ ngoài trời bao nhiêu
+__label__weather dự báo mưa nắng
+__label__weather trời có nắng không
+__label__other xin chào
+__label__other cảm ơn nhé
+__label__other ăn cơm chưa
+__label__other random text xyz

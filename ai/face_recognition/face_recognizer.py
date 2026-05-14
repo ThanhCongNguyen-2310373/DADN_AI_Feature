@@ -266,7 +266,10 @@ class FaceRecognizer:
 
     def get_status(self):
         with self._status_lock:
-            return dict(self._face_status)
+            out = dict(self._face_status)
+        # Không trả về similarity cho client web (chỉ dùng nội bộ)
+        out.pop("similarity", None)
+        return out
 
     # ------------------------------------------------------------------
     # Vòng lặp nhận diện chính
@@ -373,7 +376,7 @@ class FaceRecognizer:
                 display_name = stable_person or candidate_name
                 color = (0, 255, 0) if display_name != "Unknown" else (0, 0, 255)
                 cv2.rectangle(frame, (x, y), (x + w, y + h), color, 2)
-                label_text = f"{display_name} ({similarity:.0%})"
+                label_text = str(display_name)
                 cv2.putText(frame, label_text,
                             (x, y - 8), cv2.FONT_HERSHEY_SIMPLEX,
                             0.55, color, 1)

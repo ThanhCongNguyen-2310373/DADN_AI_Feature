@@ -6,9 +6,10 @@ Thực hiện REQ-05, REQ-06:
   - REQ-06: NLP bóc tách ý định → MQTT điểu khiển thiết bị → TTS phản hồi
 
 Pipeline đầy đủ:
-  Microphone → Wake Word → Ghi âm → STT (Google) → NLP (Regex)
-  → Nếu là lệnh điều khiển: MQTT publish → TTS phản hồi
-  → Nếu là câu hỏi tư vấn: RAG (LangChain + Gemini + FAISS) → TTS phản hồi
+  Microphone → Wake Word → Ghi âm → tiền xử lý (RNNoise tuỳ chọn + VAD/RMS) → STT (Google)
+  → NLP (từ điển JSON + fastText hoặc BoW-softmax + ngữ cảnh thiết bị)
+  → Nếu là lệnh điều khiển: MQTT publish → TTS (cache mp3) phản hồi ngắn
+  → Nếu là câu hỏi tư vấn: RAG (LangChain + Gemini + FAISS, KB mở rộng, fallback từ khóa) → TTS
 
 Chạy độc lập để test:
     python ai/voice_control/voice_assistant.py
@@ -20,52 +21,16 @@ import time
 import threading
 import logging
 import re
+import hashlib
 from datetime import datetime
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 import config
 from core.mqtt_client import MQTTSingleton
+from ai.voice_control.audio_preprocess import preprocess_audio_for_stt, clamp_energy_threshold
+from ai.voice_control.intent_nlp import IntentNLPEngine, VoiceContext
 
 logger = logging.getLogger(__name__)
-
-# =====================================================================
-# Ánh xạ từ khoá → MQTT Feed (NLP từ điển tiếng Việt)
-# =====================================================================
-
-# Từ khóa nhận biết câu hỏi tư vấn (sẽ được chuyển sang RAG thay vì NLP cơ bản)
-QUESTION_KEYWORDS = [
-    "là gì", "như thế nào", "bao nhiêu", "khi nào", "tại sao",
-    "giải thích", "tư vấn", "hướng dẫn", "nên", "có thể",
-    "ngưỡng", "an toàn", "tiết kiệm", "cảnh báo", "xử lý",
-    "rò rỉ", "khí gas", "nhiệt độ", "độ ẩm", "nguy hiểm",
-    "giúp", "hỏi", "cho biết", "thông tin",
-]
-
-# Từ khoá hành động
-ACTION_KEYWORDS = {
-    "bat":  ["bật", "mở", "khởi động", "bật lên", "mở lên", "bật on"],
-    "tat":  ["tắt", "đóng", "tắt đi", "tắt xuống", "tắt off", "ngắt"],
-}
-
-# Từ khoá thiết bị → (feed_name, tên hiển thị)
-DEVICE_KEYWORDS = {
-    config.FEED_LED:  {
-        "keywords": ["đèn", "den", "bóng đèn", "bong den", "đèn điện", "ánh sáng"],
-        "name_vi": "đèn"
-    },
-    config.FEED_FAN:  {
-        "keywords": ["quạt", "quat", "máy quạt", "may quat", "quạt điện", "quạt gió"],
-        "name_vi": "quạt"
-    },
-    config.FEED_PUMP: {
-        "keywords": ["bơm", "máy bơm", "may bom", "bơm nước", "bom nuoc", "tưới cây", "tuoi cay"],
-        "name_vi": "máy bơm"
-    },
-    config.FEED_DOOR: {
-        "keywords": ["cửa", "cua", "khóa cửa", "khoa cua", "cửa nhà", "mở cửa"],
-        "name_vi": "cửa"
-    },
-}
 
 
 class VoiceAssistant:
@@ -90,6 +55,12 @@ class VoiceAssistant:
         self._running = False
         self._thread: threading.Thread = None
         self._mqtt = MQTTSingleton.get_instance()
+        self._intent = IntentNLPEngine(
+            context_window_sec=getattr(config, "VOICE_CONTEXT_SECS", 12),
+            ml_confidence=0.42,
+        )
+        self._voice_ctx = VoiceContext()
+        self._listen_timeouts = 0
 
         # Lịch sử trò chuyện (dùng cho WebApp chat UI)
         self.chat_history = []   # [{"role": "user"|"assistant", "text": str}]
@@ -180,8 +151,10 @@ class VoiceAssistant:
         """
         sr = self._sr
         with sr.Microphone() as source:
-            logger.info("[Voice] 🔊 Đang hiệu chỉnh nhiễu môi trường (2s)...")
-            self._recognizer.adjust_for_ambient_noise(source, duration=2)
+            calib = float(getattr(config, "VOICE_AMBIENT_CALIB_SEC", 2.0))
+            logger.info("[Voice] 🔊 Đang hiệu chỉnh nhiễu môi trường (%.1fs)...", calib)
+            self._recognizer.adjust_for_ambient_noise(source, duration=calib)
+            clamp_energy_threshold(self._recognizer, config)
             logger.info(f"[Voice] 👂 Đang lắng nghe wake word '{config.WAKE_WORD}'...")
 
             while self._running:
@@ -220,6 +193,17 @@ class VoiceAssistant:
                             self._speak("Xin lỗi, tôi chưa nghe rõ. Bạn có thể nhắc lại không?", wait=True)
 
                 except self._sr.WaitTimeoutError:
+                    self._listen_timeouts += 1
+                    nrec = int(getattr(config, "VOICE_ENERGY_RECALIB_AFTER_TIMEOUTS", 30))
+                    if getattr(config, "VOICE_AUTO_ENERGY", True) and nrec > 0 and self._listen_timeouts >= nrec:
+                        self._listen_timeouts = 0
+                        try:
+                            recalib = float(getattr(config, "VOICE_AMBIENT_RECALIB_SEC", 0.5))
+                            self._recognizer.adjust_for_ambient_noise(source, duration=recalib)
+                            clamp_energy_threshold(self._recognizer, config)
+                            logger.debug("[Voice] Đã hiệu chỉnh lại energy_threshold theo môi trường.")
+                        except Exception as e:
+                            logger.debug("[Voice] Recalib mic: %s", e)
                     # Timeout bình thường khi không có âm thanh - không phải lỗi
                     pass
                 except self._sr.UnknownValueError:
@@ -248,6 +232,7 @@ class VoiceAssistant:
             Chuỗi văn bản hoặc chuỗi rỗng nếu thất bại.
         """
         try:
+            audio = preprocess_audio_for_stt(audio, self._sr)
             text = self._recognizer.recognize_google(
                 audio,
                 language=config.VOICE_LANGUAGE
@@ -263,109 +248,78 @@ class VoiceAssistant:
     # NLP: Bóc tách ý định (Intent Extraction)
     # ------------------------------------------------------------------
     def _is_question(self, text: str) -> bool:
-        """
-        Kiểm tra xem câu văn bản có phải câu hỏi tư vấn không.
-        Nếu có từ khóa câu hỏi và không có từ khóa hành động điều khiển → là câu hỏi.
-
-        Args:
-            text: Văn bản cần kiểm tra (lowercase)
-        Returns:
-            True nếu là câu hỏi tư vấn
-        """
-        has_question_keyword  = any(kw in text for kw in QUESTION_KEYWORDS)
-        has_action_keyword    = any(kw in text for kws in ACTION_KEYWORDS.values() for kw in kws)
-        has_device_keyword    = any(kw in text for info in DEVICE_KEYWORDS.values() for kw in info["keywords"])
-        # Là câu hỏi nếu có từ khóa câu hỏi nhưng không rõ là lệnh điều khiển
-        return has_question_keyword and not (has_action_keyword and has_device_keyword)
+        """Ủy quyền cho IntentNLPEngine (từ điển mở rộng trong intent_lexicon.json)."""
+        return self._intent.is_question(text)
 
     def _process_command(self, text: str):
+        """Giữ API cũ: xử lý lệnh và TTS."""
+        self.handle_user_text(text, speak=True)
+
+    def handle_user_text(self, text: str, *, speak: bool = True) -> str:
         """
-        Phân tích câu lệnh tiếng Việt và ánh xạ thành lệnh MQTT.
-        Nếu là câu hỏi tư vấn, chuyển sang RAG (Gemini) để trả lời.
-
-        Phân luồng:
-          1. Kiểm tra có phải câu hỏi không (_is_question)
-             YES → Hỏi RAG → TTS phản hồi
-          2. Nếu là lệnh: tìm ACTION + DEVICE → MQTT → TTS
-
-        Args:
-            text: Câu lệnh dạng văn bản từ STT
+        Luồng NLP thống nhất (mic + HTTP). Trả về nội dung phản hồi; tùy chọn TTS.
         """
         text_lower = text.lower().strip()
         logger.info(f"[Voice] 🧠 NLP xử lý: '{text_lower}'")
 
-        # Lưu vào lịch sử chat
         self._add_to_history("user", text)
 
-        # --- Phân luồng: câu hỏi thời tiết → WeatherService (Phase 4) ---
-        _WEATHER_KEYWORDS = [
-            "thời tiết", "thoi tiet", "nhiệt độ ngoài", "trời", "mưa", "nắng",
-            "tuyết", "gió", "bão", "ngoài trời", "hôm nay trời", "weather",
-        ]
-        if any(kw in text_lower for kw in _WEATHER_KEYWORDS):
+        response = ""
+
+        if self._intent.is_weather(text_lower):
             logger.info("[Voice] 🌤 Phát hiện câu hỏi thời tiết → WeatherService")
             response = self._answer_weather(text)
-            self._speak(response)
-            self._add_to_history("assistant", response)
-            return
-
-        # --- Phân luồng: câu hỏi tư vấn → RAG ---
-        if self._is_question(text_lower):
-            logger.info(f"[Voice] 📚 Phát hiện câu hỏi tư vấn, chuyển sang RAG...")
-            response = self._ask_rag(text)
-            self._speak(response)
-            self._add_to_history("assistant", response)
-            return
-
-        # --- Lệnh điều khiển: Tìm action ---
-        action = None
-        for action_key, keywords in ACTION_KEYWORDS.items():
-            if any(kw in text_lower for kw in keywords):
-                action = action_key
-                break
-
-        # --- Tìm thiết bị ---
-        target_feed = None
-        device_name = None
-        for feed, info in DEVICE_KEYWORDS.items():
-            if any(kw in text_lower for kw in info["keywords"]):
-                target_feed = feed
-                device_name = info["name_vi"]
-                break
-
-        # --- Thực thi lệnh điều khiển ---
-        if action and target_feed:
-            mqtt_value = "ON" if action == "bat" else "OFF"
-            action_vi  = "bật" if action == "bat" else "tắt"
-
-            success = self._mqtt.publish(target_feed, mqtt_value)
-
-            if success:
-                response = f"Đã {action_vi} {device_name} thành công."
-                logger.info(f"[Voice] ✅ Lệnh: {action_vi} {device_name} → MQTT {target_feed}={mqtt_value}")
-
-                # Ghi log sự kiện điều khiển
-                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                log_msg = f"[{timestamp}] Voice: {action_vi.capitalize()} {device_name}"
-                self._mqtt.publish(config.FEED_LOG, log_msg)
-            else:
-                response = f"Xin lỗi, không thể kết nối đến {device_name} lúc này."
-                logger.warning(f"[Voice] Publish thất bại cho feed: {target_feed}")
-
-        elif not action and not target_feed:
-            # Không nhận ra cả action lẫn device → thử hỏi RAG trước khi báo lỗi
-            logger.info(f"[Voice] Không nhận ra lệnh, chuyển RAG xử lý: '{text_lower}'")
-            response = self._ask_rag(text)
-        elif not action:
-            response = "Xin lỗi, tôi không hiểu bạn muốn bật hay tắt."
-            logger.warning(f"[Voice] Không tìm thấy action trong: '{text_lower}'")
         else:
-            response = "Xin lỗi, tôi không xác định được thiết bị cần điều khiển."
-            logger.warning(f"[Voice] Không tìm thấy thiết bị trong: '{text_lower}'")
+            action, target_feed, device_name = self._intent.resolve_action_device(
+                text_lower, self._voice_ctx
+            )
 
-        # TTS phản hồi và lưu lịch sử
-        self._speak(response)
+            if action and target_feed:
+                mqtt_value = "ON" if action == "bat" else "OFF"
+                action_vi = "bật" if action == "bat" else "tắt"
+                success = self._mqtt.publish(target_feed, mqtt_value)
+
+                if success:
+                    response = f"Đã {action_vi} {device_name}."
+                    logger.info(
+                        f"[Voice] ✅ Lệnh: {action_vi} {device_name} → MQTT {target_feed}={mqtt_value}"
+                    )
+                    self._voice_ctx.touch("control", target_feed, action, device_name)
+                    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    log_msg = f"[{timestamp}] Voice: {action_vi.capitalize()} {device_name}"
+                    self._mqtt.publish(config.FEED_LOG, log_msg)
+                else:
+                    response = f"Không kết nối được {device_name}."
+                    logger.warning(f"[Voice] Publish thất bại cho feed: {target_feed}")
+
+            elif self._is_question(text_lower):
+                logger.info("[Voice] 📚 Câu hỏi tư vấn (từ điển) → RAG")
+                response = self._ask_rag(text)
+
+            else:
+                ml_label, prob = self._intent.ml_predict(text_lower)
+                thr = self._intent.ml_confidence
+                if ml_label == "question" and prob >= thr:
+                    logger.info("[Voice] 📚 Câu hỏi (mô hình) → RAG")
+                    response = self._ask_rag(text)
+                elif ml_label == "weather" and prob >= thr:
+                    response = self._answer_weather(text)
+                elif ml_label == "control_device" and prob >= thr and not action and not target_feed:
+                    response = "Xin nhắc rõ thiết bị, ví dụ: bật đèn hoặc tắt quạt."
+                elif not action and not target_feed:
+                    logger.info(f"[Voice] Không nhận ra lệnh, chuyển RAG: '{text_lower}'")
+                    response = self._ask_rag(text)
+                elif not action:
+                    response = "Bạn muốn bật hay tắt?"
+                    logger.warning(f"[Voice] Thiếu action: '{text_lower}'")
+                else:
+                    response = "Không xác định được thiết bị."
+                    logger.warning(f"[Voice] Thiếu thiết bị: '{text_lower}'")
+
+        if speak:
+            self._speak(response)
         self._add_to_history("assistant", response)
+        return response
 
     def _ask_rag(self, question: str) -> str:
         """
@@ -382,7 +336,7 @@ class VoiceAssistant:
         try:
             # Truyền kèm lịch sử hội thoại (tối đa 6 tin gần nhất)
             history_ctx = self.chat_history[-6:] if len(self.chat_history) > 0 else []
-            answer = self._rag.ask(question, history=history_ctx)
+            answer = self._rag.ask(question, history=history_ctx, short_answer=True)
             logger.info(f"[Voice] 📚 RAG trả lời: '{answer[:80]}...'")
             return answer
         except Exception as e:
@@ -508,23 +462,36 @@ class VoiceAssistant:
         def tts_task():
             try:
                 import tempfile
-                tts = self._gtts(text=spoken_text, lang="vi", slow=False)
-                # Lưu vào file tạm rồi phát
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as fp:
-                    tmp_path = fp.name
-                    tts.save(tmp_path)
+                cache_dir = getattr(config, "TTS_CACHE_DIR", os.path.join("data", "tts_cache"))
+                os.makedirs(cache_dir, exist_ok=True)
+                key_src = spoken_text.strip().lower()
+                digest = hashlib.sha256(key_src.encode("utf-8")).hexdigest()[:20]
+                cache_path = os.path.join(cache_dir, f"{digest}.mp3")
+
+                tmp_path = cache_path
+                if not os.path.isfile(cache_path):
+                    tts = self._gtts(text=spoken_text, lang="vi", slow=False)
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as fp:
+                        gen_path = fp.name
+                    tts.save(gen_path)
+                    try:
+                        os.replace(gen_path, cache_path)
+                    except Exception:
+                        tmp_path = gen_path
+                else:
+                    tmp_path = cache_path
 
                 self._pygame.mixer.music.load(tmp_path)
                 self._pygame.mixer.music.play()
 
-                # Chờ phát xong
                 while self._pygame.mixer.music.get_busy():
                     time.sleep(0.1)
 
                 self._pygame.mixer.music.stop()
                 self._pygame.mixer.music.unload()
 
-                os.remove(tmp_path)  # Dọn file tạm
+                if tmp_path != cache_path and os.path.isfile(tmp_path):
+                    os.remove(tmp_path)
             except Exception as e:
                 logger.error(f"[Voice] Lỗi TTS: {e}")
 
@@ -568,6 +535,9 @@ class GeminiRAGAssistant:
         self._llm = None
         self._retriever = None
         self._raw_genai_model = None
+        self._rag_k = int(getattr(config, "RAG_RETRIEVER_K", 2))
+        self._kb_fallback_chunks: list = []
+        self._kb_plain: str = ""
         self._setup_rag()
 
     def is_ready(self) -> bool:
@@ -605,13 +575,31 @@ class GeminiRAGAssistant:
 
             self._raw_genai_model = genai.GenerativeModel(selected_model)
 
+            base_dir = os.path.dirname(__file__)
+            kb_files = [
+                os.path.join(base_dir, "knowledge_base.txt"),
+                os.path.join(base_dir, "device_manual_vi.txt"),
+            ]
+            plain_parts = []
+            for kb_path in kb_files:
+                if os.path.isfile(kb_path):
+                    with open(kb_path, encoding="utf-8") as f:
+                        plain_parts.append(f.read())
+            self._kb_plain = "\n\n".join(plain_parts)
+            self._kb_fallback_chunks = [
+                p.strip() for p in self._kb_plain.split("\n\n")
+                if len(p.strip()) > 30
+            ]
+
             # Cố gắng khởi tạo LangChain LLM trước; nếu lỗi vẫn giữ SDK fallback.
             try:
                 from langchain_google_genai import ChatGoogleGenerativeAI
+                max_out = int(getattr(config, "RAG_MAX_OUTPUT_TOKENS", 256))
                 self._llm = ChatGoogleGenerativeAI(
                     model=selected_model,
                     temperature=0.3,
                     convert_system_message_to_human=True,
+                    model_kwargs={"max_output_tokens": max_out},
                 )
             except Exception as llm_err:
                 self._llm = None
@@ -637,28 +625,32 @@ class GeminiRAGAssistant:
                 model="models/gemini-embedding-001",
             )
 
-            # Đường dẫn đến knowledge_base.txt
-            kb_path = os.path.join(os.path.dirname(__file__), "knowledge_base.txt")
+            all_docs = []
+            for kb_path in kb_files:
+                if os.path.exists(kb_path):
+                    loader = TextLoader(kb_path, encoding="utf-8")
+                    all_docs.extend(loader.load())
 
-            if os.path.exists(kb_path):
-                # Nạp và chia nhỏ tài liệu
-                loader = TextLoader(kb_path, encoding="utf-8")
-                docs = loader.load()
+            if all_docs:
+                cs = int(getattr(config, "RAG_CHUNK_SIZE", 360))
+                co = int(getattr(config, "RAG_CHUNK_OVERLAP", 55))
                 splitter = CharacterTextSplitter(
-                    chunk_size=500,
-                    chunk_overlap=80,
-                    separator="\n\n"   # Chia theo đoạn văn
+                    chunk_size=cs,
+                    chunk_overlap=co,
+                    separator="\n\n"
                 )
-                chunks = splitter.split_documents(docs)
-                logger.info(f"[RAG] Đã tạo {len(chunks)} chunks từ knowledge_base.txt")
+                chunks = splitter.split_documents(all_docs)
+                logger.info(f"[RAG] Đã tạo {len(chunks)} chunks từ {len(kb_files)} file KB")
 
                 # Tạo FAISS vector store
                 vector_store = FAISS.from_documents(chunks, embeddings)
-                self._retriever = vector_store.as_retriever(search_kwargs={"k": 3})
+                self._retriever = vector_store.as_retriever(
+                    search_kwargs={"k": self._rag_k}
+                )
 
                 # Tạo RAG chain với prompt tiếng Việt (nếu PromptTemplate khả dụng).
                 prompt_template = """Bạn là trợ lý AI của hệ thống nhà thông minh YoloHome.
-Hãy trả lời câu hỏi dựa trên thông tin sau đây. Trả lời ngắn gọn, rõ ràng bằng tiếng Việt.
+Hãy trả lời câu hỏi dựa trên thông tin sau đây. Trả lời ngắn gọn, rõ ràng bằng tiếng Việt (ưu tiên tối đa 2 câu).
 Nếu không tìm thấy thông tin phù hợp, hãy trả lời dựa trên kiến thức chung của bạn.
 
 Thông tin tham khảo:
@@ -700,7 +692,7 @@ Trả lời:"""
                 logger.info("[RAG] ✅ Gemini RAG Assistant đã sẵn sàng với knowledge base.")
             else:
                 # Fallback: Gemini thuần không có RAG
-                logger.warning("[RAG] Không tìm thấy knowledge_base.txt → dùng Gemini thuần.")
+                logger.warning("[RAG] Không tìm thấy file knowledge base → dùng Gemini thuần.")
                 self._llm = llm
 
         except ImportError as e:
@@ -709,16 +701,44 @@ Trả lời:"""
         except Exception as e:
             logger.error(f"[RAG] Lỗi khởi tạo: {e}")
 
-    def ask(self, question: str, history: list = None) -> str:
+    def _clip_context(self, context: str) -> str:
+        mx = int(getattr(config, "RAG_MAX_CONTEXT_CHARS", 1800))
+        if len(context) <= mx:
+            return context
+        return context[:mx] + "\n...[rút gọn]..."
+
+    def _keyword_fallback(self, question: str) -> str | None:
+        """Trả lời tĩnh từ đoạn KB khớp từ khóa khi LLM/RAG lỗi."""
+        if not self._kb_fallback_chunks:
+            return None
+        q = question.lower()
+        words = set(re.findall(r"[\wàáảãạăằắẳẵặâầấẩẫậèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổộổơờớởỡợùúủũụưừứửữựỳýỷỹỵđ]+", q))
+        words = {w for w in words if len(w) > 2}
+        if len(words) < 1:
+            return None
+        best_score = 0
+        best_para = None
+        for para in self._kb_fallback_chunks:
+            pl = para.lower()
+            score = sum(1 for w in words if w in pl)
+            if score > best_score:
+                best_score = score
+                best_para = para
+        if best_score >= 2 and best_para:
+            return best_para[:900].strip()
+        return None
+
+    def ask(self, question: str, history: list = None, short_answer: bool = True) -> str:
         """
         Đặt câu hỏi cho RAG Assistant, có ngữ cảnh lịch sử hội thoại.
 
         Args:
             question: Câu hỏi tiếng Việt
             history : List[{"role": ..., "text": ..., "time": ...}] (6 mục gần nhất)
+            short_answer: ép câu trả lời ngắn (prompt + max tokens)
 
         Returns:
-            Câu trả lời từ Gemini.
+            Câu trả lời từ Gemini hoặc fallback KB.
         """
         if self._llm is None and self._raw_genai_model is None:
             return "Tính năng trợ lý AI chưa được kích hoạt."
@@ -732,7 +752,6 @@ Trả lời:"""
                     lines.append(f"{role}: {item.get('text', '')}")
                 history_str = "\n".join(lines)
 
-            # Nếu có lịch sử, đính kèm vào câu hỏi
             augmented_question = question
             if history_str:
                 augmented_question = (
@@ -740,34 +759,49 @@ Trả lời:"""
                     f"Câu hỏi mới: {question}"
                 )
 
+            query_for_chain = augmented_question
+            if short_answer:
+                query_for_chain = (
+                    augmented_question
+                    + "\n\n(Yêu cầu: trả lời tối đa 1–2 câu, tiếng Việt, đi thẳng vào ý chính.)"
+                )
+
             # Ưu tiên đường RAG chain nếu có.
             if self._chain is not None:
-                result = self._chain.invoke({"query": augmented_question})
+                result = self._chain.invoke({"query": query_for_chain})
                 return result.get("result", "Xin lỗi, tôi không tìm được câu trả lời.")
 
             # Fallback: tự retrieve context rồi hỏi LLM trực tiếp.
             context = ""
             if self._retriever is not None:
                 try:
-                    docs = self._retriever.invoke(augmented_question)
+                    docs = self._retriever.invoke(query_for_chain)
                 except Exception:
-                    docs = self._retriever.get_relevant_documents(augmented_question)
+                    docs = self._retriever.get_relevant_documents(query_for_chain)
+                rk = getattr(self, "_rag_k", 2)
                 context = "\n\n".join(
-                    getattr(doc, "page_content", "") for doc in docs[:3]
+                    getattr(doc, "page_content", "") for doc in docs[:rk]
                 ).strip()
+            context = self._clip_context(context)
 
+            short_hint = (
+                " Trả lời tối đa 1–2 câu tiếng Việt."
+                if short_answer else ""
+            )
             if context:
                 prompt = (
-                    "Bạn là trợ lý AI của hệ thống nhà thông minh YoloHome. "
-                    "Hãy trả lời ngắn gọn, rõ ràng bằng tiếng Việt dựa trên ngữ cảnh sau.\n\n"
+                    "Bạn là trợ lý AI của hệ thống nhà thông minh YoloHome."
+                    + short_hint
+                    + " Dựa trên ngữ cảnh sau.\n\n"
                     f"Ngữ cảnh:\n{context}\n\n"
-                    f"Câu hỏi: {augmented_question}\n\nTrả lời:"
+                    f"Câu hỏi: {query_for_chain}\n\nTrả lời:"
                 )
             else:
                 prompt = (
-                    "Bạn là trợ lý AI của hệ thống nhà thông minh YoloHome. "
-                    "Hãy trả lời ngắn gọn, rõ ràng bằng tiếng Việt.\n\n"
-                    f"Câu hỏi: {augmented_question}\n\nTrả lời:"
+                    "Bạn là trợ lý AI của hệ thống nhà thông minh YoloHome."
+                    + short_hint
+                    + "\n\n"
+                    f"Câu hỏi: {query_for_chain}\n\nTrả lời:"
                 )
 
             content = None
@@ -779,7 +813,16 @@ Trả lời:"""
                     logger.warning(f"[RAG] LangChain LLM invoke lỗi, chuyển SDK fallback: {llm_err}")
 
             if content is None:
-                raw_resp = self._raw_genai_model.generate_content(prompt)
+                max_out = int(getattr(config, "RAG_MAX_OUTPUT_TOKENS", 256))
+                try:
+                    import google.generativeai as genai
+                    gen_cfg = genai.types.GenerationConfig(max_output_tokens=max_out)
+                    raw_resp = self._raw_genai_model.generate_content(
+                        prompt,
+                        generation_config=gen_cfg,
+                    )
+                except (TypeError, AttributeError):
+                    raw_resp = self._raw_genai_model.generate_content(prompt)
                 content = getattr(raw_resp, "text", "")
             if isinstance(content, list):
                 text_parts = []
@@ -794,6 +837,10 @@ Trả lời:"""
             return final_text or "Xin lỗi, tôi không nhận được nội dung trả lời từ mô hình AI."
         except Exception as e:
             logger.error(f"[RAG] Lỗi khi hỏi Gemini: {e}")
+            fb = self._keyword_fallback(question)
+            if fb:
+                logger.info("[RAG] Dùng fallback từ khóa trên knowledge base.")
+                return fb
             return "Xin lỗi, đã có lỗi khi xử lý câu hỏi của bạn."
 
 

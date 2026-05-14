@@ -1,0 +1,58 @@
+{
+  "question_keywords": [
+    "là gì", "như thế nào", "bao nhiêu", "khi nào", "tại sao",
+    "giải thích", "tư vấn", "hướng dẫn", "nên", "có thể",
+    "ngưỡng", "an toàn", "tiết kiệm", "cảnh báo", "xử lý",
+    "rò rỉ", "khí gas", "nhiệt độ", "độ ẩm", "nguy hiểm",
+    "giúp", "hỏi", "cho biết", "thông tin", "cách dùng", "làm sao"
+  ],
+  "weather_keywords": [
+    "thời tiết", "thoi tiet", "nhiệt độ ngoài", "trời", "mưa", "nắng",
+    "tuyết", "gió", "bão", "ngoài trời", "hôm nay trời", "weather",
+    "dự báo", "du bao", "ẩm ướt", "am uot"
+  ],
+  "action_keywords": {
+    "bat": [
+      "bật", "mở", "khởi động", "bật lên", "mở lên", "bật on", "kick hoat",
+      "kích hoạt", "start", "on", "mo len", "bat len", "lên đèn", "len den"
+    ],
+    "tat": [
+      "tắt", "đóng", "tắt đi", "tắt xuống", "tắt off", "ngắt", "stop",
+      "off", "dong", "tat di", "im", "ngủ", "sleep"
+    ]
+  },
+  "device_keywords": {
+    "yolohome-led": {
+      "keywords": [
+        "đèn", "den", "bóng đèn", "bong den", "đèn điện", "ánh sáng",
+        "led", "đèn led", "chỗ sáng", "cho sang"
+      ],
+      "name_vi": "đèn"
+    },
+    "yolohome-fan": {
+      "keywords": [
+        "quạt", "quat", "máy quạt", "may quat", "quạt điện", "quạt gió",
+        "fan", "làm mát", "lam mat", "thổi gió"
+      ],
+      "name_vi": "quạt"
+    },
+    "yolohome-pump": {
+      "keywords": [
+        "bơm", "máy bơm", "may bom", "bơm nước", "bom nuoc", "tưới cây",
+        "tuoi cay", "pump", "tưới", "tuoi", "vòi nước", "voi nuoc"
+      ],
+      "name_vi": "máy bơm"
+    },
+    "yolohome-door": {
+      "keywords": [
+        "cửa", "cua", "khóa cửa", "khoa cua", "cửa nhà", "mở cửa",
+        "đóng cửa", "door", "khóa", "khoa", "servo cửa"
+      ],
+      "name_vi": "cửa"
+    }
+  },
+  "pronoun_device": [
+    "nó", "no", "cái đó", "cai do", "cái này", "cai nay", "thằng đó",
+    "thang do", "thiết bị đó", "thiet bi do", "chỗ đó", "cho do"
+  ]
+}

@@ -217,7 +217,6 @@ function renderFaceStatus(data) {
 
     const state = data.state || "idle";
     const person = data.person_name || "";
-    const similarity = typeof data.similarity === "number" ? Math.round(data.similarity * 100) : 0;
     const message = data.message || "Chờ nhận diện...";
     const ts = data.timestamp ? ` · ${data.timestamp}` : "";
 
@@ -240,51 +239,46 @@ function renderFaceStatus(data) {
         <div><strong>${badgeLabel}</strong>${ts}</div>
         <div>${message}</div>
         <div>${person ? `Người: <strong>${escapeHtml(person)}</strong>` : "Người: -"}</div>
-        <div>${similarity ? `Độ tin cậy: <strong>${similarity}%</strong>` : ""}</div>
       </div>`;
 
-        const faceKey = `${state}|${person}|${data.timestamp || ""}`;
-        if (state === "known" && person && faceKey !== _lastFaceStatusKey) {
-            showToast(`Đã nhận diện ${person}`, `Độ tin cậy ${similarity}%`, "success");
-            showFaceModal(`Đã nhận diện ${person}`, `Độ tin cậy ${similarity}%`);
-        }
-        _lastFaceStatusKey = faceKey;
+    const faceKey = `${state}|${person}|${data.timestamp || ""}`;
+    if (state === "known" && person && faceKey !== _lastFaceStatusKey) {
+        showToast(`Đã nhận diện ${person}`, "", "success");
+        showFaceModal(person);
+    }
+    _lastFaceStatusKey = faceKey;
 }
 
-    // Prominent face modal (large notification)
-    function showFaceModal(title, detail = '', timeout = 6000) {
-        const modal = el('face-modal');
-        if (!modal) return;
-        const nameEl = el('face-modal-name');
-        const titleEl = el('face-modal-title');
-        const detailEl = el('face-modal-detail');
-        const imgEl = el('face-modal-img');
+// Prominent face modal (large notification)
+function showFaceModal(title, timeout = 6000) {
+    const modal = el('face-modal');
+    if (!modal) return;
+    const nameEl = el('face-modal-name');
+    const imgEl = el('face-modal-img');
 
-        if (nameEl) nameEl.textContent = title.replace(/^Đã nhận diện\s*/, '');
-        if (detailEl) detailEl.textContent = detail;
-        if (imgEl) imgEl.innerHTML = '<i class="fas fa-user-circle"></i>';
+    if (nameEl) nameEl.textContent = title.replace(/^Đã nhận diện\s*/, '');
+    if (imgEl) imgEl.innerHTML = '<i class="fas fa-user-circle"></i>';
 
-        modal.classList.add('show');
-        modal.setAttribute('aria-hidden', 'false');
+    modal.classList.add('show');
+    modal.setAttribute('aria-hidden', 'false');
 
-        // auto hide
-        if (modal._hideTimer) clearTimeout(modal._hideTimer);
-        modal._hideTimer = setTimeout(() => hideFaceModal(), timeout);
-    }
+    if (modal._hideTimer) clearTimeout(modal._hideTimer);
+    modal._hideTimer = setTimeout(() => hideFaceModal(), timeout);
+}
 
-    function hideFaceModal() {
-        const modal = el('face-modal');
-        if (!modal) return;
-        modal.classList.remove('show');
-        modal.setAttribute('aria-hidden', 'true');
-        if (modal._hideTimer) { clearTimeout(modal._hideTimer); modal._hideTimer = null; }
-    }
+function hideFaceModal() {
+    const modal = el('face-modal');
+    if (!modal) return;
+    modal.classList.remove('show');
+    modal.setAttribute('aria-hidden', 'true');
+    if (modal._hideTimer) { clearTimeout(modal._hideTimer); modal._hideTimer = null; }
+}
 
-    // wire close button
-    document.addEventListener('click', (ev) => {
-        const btn = ev.target && ev.target.id === 'face-modal-close';
-        if (btn) hideFaceModal();
-    });
+// wire close button
+document.addEventListener('click', (ev) => {
+    const btn = ev.target && ev.target.id === 'face-modal-close';
+    if (btn) hideFaceModal();
+});
 
 function renderFaceLog(events) {
     const list = el("face-log-list");
@@ -300,9 +294,6 @@ function renderFaceLog(events) {
                 : ev.event_type === "stranger"
                     ? "Người lạ"
                     : "Sự kiện khuôn mặt";
-            const confidence = typeof ev.confidence === "number" && ev.confidence > 0
-                ? `<div class="log-item-meta">Tin cậy: ${Math.round(ev.confidence * 100)}%</div>`
-                : "";
             const img = ev.url
                 ? `<img src="${ev.url}" alt="face log" loading="lazy" onerror="this.src='/static/img/no_camera.svg'" />`
                 : `<div class="log-item-fallback"><i class="fas fa-user"></i></div>`;
@@ -311,7 +302,7 @@ function renderFaceLog(events) {
       ${img}
       <div class="log-item-time">${ev.time}</div>
       <div class="log-item-name">${title}</div>
-      ${confidence}
+      
     </div>`;
         })
         .join("");

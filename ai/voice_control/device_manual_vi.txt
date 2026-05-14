@@ -1,0 +1,19 @@
+=== HƯỚNG DẪN SỬ DỤNG YOLOHOME (NỘI BỘ) ===
+
+Wake word mặc định là "yolo". Sau khi hệ thống phản hồi, nói rõ lệnh trong vài giây.
+Ví dụ: "bật đèn", "tắt quạt", "tưới cây", "mở cửa" (cửa cần xác thực khuôn mặt).
+
+Dashboard web: đăng nhập bằng tài khoản được cấp, xem cảm biến realtime, điều khiển thiết bị, lịch sử 24h.
+
+=== THÔNG TIN FEED / THIẾT BỊ ===
+
+Feed nhiệt độ: yolohome-temperature (°C). Feed độ ẩm: yolohome-humidity (%). Feed khí gas: yolohome-gas (ppm).
+Đèn: yolohome-led — bật/tắt qua MQTT giá trị ON/OFF. Quạt: yolohome-fan. Máy bơm: yolohome-pump. Cửa: yolohome-door.
+
+Ngưỡng cảnh báo mặc định: nhiệt độ > 35°C, gas > 300 ppm (có thể chỉnh trong config).
+
+=== XỬ LÝ SỰ CỐ NHANH ===
+
+Không nghe được lệnh: kiểm tra micro Windows, giảm nhiễu xung quanh, nói gần mic hơn.
+MQTT không kết nối: kiểm tra ADAFRUIT_USERNAME và ADAFRUIT_AIO_KEY trong .env.
+RAG không trả lời: kiểm tra GEMINI_API_KEY và kết nối internet.

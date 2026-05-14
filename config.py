@@ -94,9 +94,37 @@ FACE_AUGMENT_OCCLUSION_AREA = (0.15, 0.3)
 # ============================================================
 WAKE_WORD               = "yolo"   # Từ khoá đánh thức hệ thống
 VOICE_LANGUAGE          = "vi-VN"  # Ngôn ngữ nhận diện giọng nói
-VOICE_ENERGY_THRESHOLD  = 300      # Ngưỡng năng lượng mic để bắt đầu ghi âm
+VOICE_ENERGY_THRESHOLD  = 300      # Ngưỡng năng lượng mic (mặc định trước khi auto-calib)
 VOICE_TIMEOUT           = 5        # Giây chờ lệnh sau wake word
 VOICE_PHRASE_LIMIT      = 8        # Giây tối đa của một câu lệnh
+
+# --- Voice v8: STT (VAD / năng lượng) ---
+VOICE_STT_TARGET_HZ         = int(os.getenv("VOICE_STT_TARGET_HZ", "16000"))  # webrtcvad: 8000|16000|32000|48000
+VOICE_VAD_ENABLED           = os.getenv("VOICE_VAD_ENABLED", "1") == "1"
+VOICE_VAD_AGGRESSIVENESS    = int(os.getenv("VOICE_VAD_AGGRESSIVENESS", "2"))  # 0–3
+VOICE_RNNOISE_ENABLED       = os.getenv("VOICE_RNNOISE_ENABLED", "1") == "1"  # cần pyrnnoise; tắt nếu không cài
+VOICE_AUTO_ENERGY           = os.getenv("VOICE_AUTO_ENERGY", "1") == "1"
+VOICE_ENERGY_THRESHOLD_MIN  = int(os.getenv("VOICE_ENERGY_THRESHOLD_MIN", "120"))
+VOICE_ENERGY_THRESHOLD_MAX  = int(os.getenv("VOICE_ENERGY_THRESHOLD_MAX", "1800"))
+VOICE_AMBIENT_CALIB_SEC     = float(os.getenv("VOICE_AMBIENT_CALIB_SEC", "2.0"))
+VOICE_AMBIENT_RECALIB_SEC   = float(os.getenv("VOICE_AMBIENT_RECALIB_SEC", "0.5"))
+VOICE_ENERGY_RECALIB_AFTER_TIMEOUTS = int(os.getenv("VOICE_ENERGY_RECALIB_AFTER_TIMEOUTS", "30"))
+
+# --- Voice v8: ngữ cảnh thiết bị (đại từ "tắt nó") ---
+VOICE_CONTEXT_SECS          = int(os.getenv("VOICE_CONTEXT_SECS", "12"))
+
+# --- Voice v8: RAG ---
+RAG_CHUNK_SIZE              = int(os.getenv("RAG_CHUNK_SIZE", "360"))
+RAG_CHUNK_OVERLAP           = int(os.getenv("RAG_CHUNK_OVERLAP", "55"))
+RAG_RETRIEVER_K             = int(os.getenv("RAG_RETRIEVER_K", "2"))
+RAG_MAX_CONTEXT_CHARS       = int(os.getenv("RAG_MAX_CONTEXT_CHARS", "1800"))
+RAG_MAX_OUTPUT_TOKENS       = int(os.getenv("RAG_MAX_OUTPUT_TOKENS", "256"))
+
+# --- Voice v8: TTS cache ---
+TTS_CACHE_DIR               = os.getenv(
+    "TTS_CACHE_DIR",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "tts_cache"),
+)
 
 # ============================================================
 # LOGGING CONFIGURATION
