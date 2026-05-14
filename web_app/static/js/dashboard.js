@@ -115,7 +115,12 @@ function syncToggle(device, value) {
     const sw = el(`sw-${device}`);
     const st = el(`st-${device}`);
     if (!sw) return;
-    const isOn = value == 1 || value === true || value === "ON";
+    const isOn =
+        value === true ||
+        value === "ON" ||
+        value === "1" ||
+        value === 1 ||
+        (typeof value === "number" && value > 0);
     sw.checked = isOn;
     if (device === "door") {
         st.textContent = isOn ? "Mở" : "Đóng";

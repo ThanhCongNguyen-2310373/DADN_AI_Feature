@@ -63,7 +63,8 @@ class SensorReader:
         self._device_state = {
             "led": 0,
             "fan": 0,
-            "pump": 0
+            "pump": 0,
+            "door": 0,
         }
         # Khởi tạo trạng thái ban đầu từ Adafruit
         self._sync_state_from_cloud()
@@ -81,6 +82,7 @@ class SensorReader:
         self._mqtt.subscribe(config.FEED_LED,  self._on_led_command)
         self._mqtt.subscribe(config.FEED_FAN,  self._on_fan_command)
         self._mqtt.subscribe(config.FEED_PUMP, self._on_pump_command)
+        self._mqtt.subscribe(config.FEED_DOOR, self._on_door_command)
 
     # ------------------------------------------------------------------
     # Thread control
@@ -321,6 +323,45 @@ class SensorReader:
         status = "Bật" if value else "Tắt"
         self._mqtt.publish(config.FEED_LOG, f"[{timestamp}] {status} máy bơm (Dashboard)")
 
+    def _parse_door_payload(self, payload: str) -> int:
+        try:
+            num = float(payload)
+            if num == 0:
+                return 0
+            if num <= 1:
+                return 90
+            return int(num)
+        except (TypeError, ValueError):
+            pass
+
+        if str(payload).upper() in ("ON", "OPEN", "1", "TRUE"):
+            return 90
+        return 0
+
+    def _on_door_command(self, payload: str):
+        """
+        Xử lý lệnh mở/đóng cửa nhận từ Adafruit Dashboard.
+
+        Args:
+            payload: "ON"/"OFF" hoặc góc servo (0-180)
+        """
+        door_value = self._parse_door_payload(payload)
+        is_open = 1 if door_value != 0 else 0
+
+        logger.info(f"[Sensor] 🚪 Lệnh cửa: {'MỞ' if is_open else 'ĐÓNG'}")
+        self._serial.send_command("door", door_value)
+
+        with self._data_lock:
+            self._device_state["door"] = is_open
+        try:
+            self._db.insert_device_event("door", is_open, source="mqtt")
+        except Exception:
+            pass
+
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        status = "Mở" if is_open else "Đóng"
+        self._mqtt.publish(config.FEED_LOG, f"[{timestamp}] {status} cửa (Dashboard)")
+
     # ------------------------------------------------------------------
     # Truy xuất dữ liệu
     # ------------------------------------------------------------------
@@ -344,7 +385,7 @@ class SensorReader:
             "led":         device_state.get("led", 0),
             "fan":         device_state.get("fan", 0),
             "pump":        device_state.get("pump", 0),
-            "door":        0,  # Nếu hệ thống có thêm cửa, bạn có thể bổ sung sau
+            "door":        device_state.get("door", 0),
             "timestamp":   datetime.now().strftime("%H:%M:%S"),
         }
 
@@ -373,6 +414,12 @@ class SensorReader:
             if res_pump.status_code == 200:
                 val = res_pump.json().get("value", "0")
                 self._device_state["pump"] = 1 if str(val).upper() in ("1", "ON") else 0
+
+            # 4. Đồng bộ Cửa (DOOR)
+            res_door = requests.get(f"{base_url}/{config.FEED_DOOR}/data/last", headers=headers, timeout=5)
+            if res_door.status_code == 200:
+                val = res_door.json().get("value", "0")
+                self._device_state["door"] = 1 if self._parse_door_payload(val) != 0 else 0
             
             logger.info(f"[Sensor] Đã đồng bộ xong. Trạng thái: {self._device_state}")
         except Exception as e:

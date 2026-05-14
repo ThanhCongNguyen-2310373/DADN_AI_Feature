@@ -54,6 +54,7 @@ def collect_face_samples(person_name: str, num_samples: int = 50) -> bool:
     cap = cv2.VideoCapture(config.CAMERA_INDEX)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH,  config.FACE_FRAME_WIDTH)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, config.FACE_FRAME_HEIGHT)
+    cap.set(cv2.CAP_PROP_FPS, config.CAMERA_FPS)
 
     if not cap.isOpened():
         logger.error("[FaceRegister] ❌ Không thể mở webcam!")

@@ -103,10 +103,19 @@ def _get_current_user(request: Request) -> Optional[Dict[str, Any]]:
     return _auth.get_session_user(token)
 
 
+def _is_api_request(request: Request) -> bool:
+    if request.url.path.startswith("/api"):
+        return True
+    accept = request.headers.get("accept", "").lower()
+    return "application/json" in accept
+
+
 def require_auth(request: Request) -> Dict[str, Any]:
     """Dependency: bắt buộc đăng nhập, trả về user session hiện tại."""
     user = _get_current_user(request)
     if not user:
+        if _is_api_request(request):
+            raise HTTPException(status_code=401, detail="Chưa đăng nhập")
         raise HTTPException(
             status_code=status.HTTP_307_TEMPORARY_REDIRECT,
             headers={"Location": "/login"},

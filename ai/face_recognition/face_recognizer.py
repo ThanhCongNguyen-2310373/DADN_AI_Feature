@@ -90,7 +90,7 @@ class FaceRecognizer:
         Nạp LBPH model (.yml) và ánh xạ nhãn (.pkl) từ thư mục trained_model.
         Nếu model chưa tồn tại, in hướng dẫn chạy face_register.py trước.
         """
-        model_path     = os.path.join(config.FACE_MODEL_DIR, "face_model.yml")
+        model_path     = config.FACE_MODEL_FILE
         label_map_path = os.path.join(config.FACE_MODEL_DIR, "label_map.pkl")
 
         if not os.path.exists(model_path) or not os.path.exists(label_map_path):
@@ -149,11 +149,11 @@ class FaceRecognizer:
           - Liên tục phân tích frame
           - Nhận diện khuôn mặt và xử lý logic cửa
         """
-        # ── Mở webcam với độ phân giải thấp để tiết kiệm CPU ──
+        # ── Mở webcam theo cấu hình hệ thống ──
         self._cap = cv2.VideoCapture(config.CAMERA_INDEX)
-        self._cap.set(cv2.CAP_PROP_FRAME_WIDTH,  320)   # Giảm từ 640→320
-        self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)   # Giảm từ 480→240
-        self._cap.set(cv2.CAP_PROP_FPS, 15)             # Giới hạn FPS nguồn
+        self._cap.set(cv2.CAP_PROP_FRAME_WIDTH,  config.FACE_FRAME_WIDTH)
+        self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, config.FACE_FRAME_HEIGHT)
+        self._cap.set(cv2.CAP_PROP_FPS, config.CAMERA_FPS)
 
         cap = self._cap
         if not cap.isOpened():
@@ -161,7 +161,10 @@ class FaceRecognizer:
             self._running = False
             return
 
-        logger.info("[FaceAI] 📷 Webcam đã mở (320×240). Bắt đầu giám sát cửa...")
+        logger.info(
+            f"[FaceAI] 📷 Webcam đã mở ({config.FACE_FRAME_WIDTH}x{config.FACE_FRAME_HEIGHT}@{config.CAMERA_FPS}fps). "
+            "Bắt đầu giám sát cửa..."
+        )
 
         while self._running:
             ret, frame = cap.read()
@@ -182,7 +185,7 @@ class FaceRecognizer:
             # Equalize histogram để cải thiện nhận diện trong điều kiện ánh sáng yếu
             gray = cv2.equalizeHist(gray)
 
-            # --- Phát hiện khuôn mặt (minSize nhỏ hơn vì frame 320×240) ---
+            # --- Phát hiện khuôn mặt (minSize cân bằng giữa độ nhạy và nhiễu) ---
             faces = self._face_cascade.detectMultiScale(
                 gray,
                 scaleFactor=1.1,
@@ -197,7 +200,7 @@ class FaceRecognizer:
             else:
                 for (x, y, w, h) in faces:
                     face_roi = gray[y:y + h, x:x + w]
-                    face_roi = cv2.resize(face_roi, (100, 100))  # Nhỏ hơn → nhanh hơn
+                    face_roi = cv2.resize(face_roi, (160, 160))
 
                     # --- Nhận diện bằng LBPH ---
                     label_id, confidence = self._recognizer.predict(face_roi)

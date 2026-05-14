@@ -78,7 +78,7 @@ gateway/
 │   │   ├── face_recognizer.py
 │   │   ├── face_register.py
 │   │   ├── dataset/
-│   │   └── model/
+│   │   └── trained_model/      <- face_model.yml + label_map.pkl
 │   └── voice_control/
 │       └── voice_assistant.py <- STT + RAG + TTS + Weather query
 ├── web_app/

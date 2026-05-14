@@ -1,18 +1,20 @@
 # Top-level dependencies (Phase 5 strategy)
 Adafruit-IO==2.8.2
 pyserial
-opencv-python
-opencv-contrib-python
-numpy
-Pillow
+opencv-python==4.10.0.84
+opencv-contrib-python==4.10.0.84
+numpy==2.2.6
+Pillow==11.1.0
 SpeechRecognition
 gTTS
-pygame
+pygame==2.6.1
 PyAudio; platform_system == "Windows"
-langchain
-langchain-google-genai==1.0.10
+langchain==1.3.0
+langchain-community==0.4.1
+langchain-text-splitters==1.1.2
+langchain-google-genai==4.2.2
 faiss-cpu
-google-generativeai==0.7.2
+google-generativeai==0.8.6
 fastapi
 uvicorn[standard]
 jinja2

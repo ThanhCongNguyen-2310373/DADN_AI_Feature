@@ -149,10 +149,10 @@ class RuleEngine:
             from core.database import DatabaseSingleton
 
             feed_map = {
-                "led":  f"{config.ADAFRUIT_USERNAME}/feeds/{config.FEED_LED}",
-                "fan":  f"{config.ADAFRUIT_USERNAME}/feeds/{config.FEED_FAN}",
-                "pump": f"{config.ADAFRUIT_USERNAME}/feeds/{config.FEED_PUMP}",
-                "door": f"{config.ADAFRUIT_USERNAME}/feeds/{config.FEED_DOOR}",
+                "led":  config.FEED_LED,
+                "fan":  config.FEED_FAN,
+                "pump": config.FEED_PUMP,
+                "door": config.FEED_DOOR,
             }
             feed = feed_map.get(device)
             if feed:

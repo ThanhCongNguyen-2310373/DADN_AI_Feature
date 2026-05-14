@@ -15,7 +15,7 @@ Dùng bởi:
   - RuleEngine     → đọc/ghi automation_rules + rule_logs
   - WebApp /api/history → đọc lịch sử
   - WebApp /api/energy  → tính điện năng tiêu thụ
-  - WebApp /api/rules   → CRUD automation_rules
+    - WebApp /api/rules   → CRUD automation_rules
 """
 
 import os

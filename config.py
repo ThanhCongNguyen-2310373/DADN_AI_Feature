@@ -54,12 +54,13 @@ GAS_THRESHOLD           = 300      # Ngưỡng khí gas cảnh báo (ppm)
 # ============================================================
 FACE_DATASET_DIR        = "ai/face_recognition/dataset"
 FACE_MODEL_DIR          = "ai/face_recognition/trained_model"
-FACE_MODEL_FILE         = "ai/face_recognition/trained_model/face_model.pkl"
+FACE_MODEL_FILE         = os.path.join(FACE_MODEL_DIR, "face_model.yml")
 FACE_CONFIDENCE_THRESHOLD = 0.55   # Ngưỡng tin cậy (>= là nhận diện thành công)
 FACE_STRANGER_TIMEOUT   = 10       # Giây liên tục thấy người lạ → cảnh báo REQ-09
 CAMERA_INDEX            = 0        # Index webcam (0 = webcam mặc định)
-FACE_FRAME_WIDTH        = 640
-FACE_FRAME_HEIGHT       = 480
+CAMERA_FPS              = 30
+FACE_FRAME_WIDTH        = 1280
+FACE_FRAME_HEIGHT       = 720
 
 # ============================================================
 # VOICE CONTROL CONFIGURATION

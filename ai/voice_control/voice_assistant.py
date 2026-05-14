@@ -132,7 +132,10 @@ class VoiceAssistant:
             api_key = config.GEMINI_API_KEY
             if api_key:
                 self._rag = GeminiRAGAssistant(api_key=api_key)
-                logger.info("[Voice] ✅ Gemini RAG Assistant đã sẵn sàng.")
+                if self._rag.is_ready():
+                    logger.info("[Voice] ✅ Gemini RAG Assistant đã sẵn sàng.")
+                else:
+                    logger.warning("[Voice] ⚠️ Gemini Assistant khởi tạo chưa hoàn chỉnh, sẽ dùng fallback khi có thể.")
             else:
                 logger.warning("[Voice] ⚠️ GEMINI_API_KEY trống, RAG bị tắt.")
         except Exception as e:
@@ -459,6 +462,31 @@ class VoiceAssistant:
     # ------------------------------------------------------------------
     # Text-to-Speech
     # ------------------------------------------------------------------
+    @staticmethod
+    def _normalize_for_tts(text: str) -> str:
+        """
+        Chuyển markdown/formatting về plain text để TTS đọc tự nhiên.
+
+        Ví dụ: "**Môi trường**" -> "Môi trường"
+        """
+        if text is None:
+            return ""
+
+        plain = str(text)
+        # Markdown link: [text](url) -> text
+        plain = re.sub(r"\[([^\]]+)\]\([^\)]+\)", r"\1", plain)
+        # Inline code/backticks
+        plain = re.sub(r"`{1,3}([^`]*)`{1,3}", r"\1", plain)
+        # Bỏ bullet marker ở đầu dòng
+        plain = re.sub(r"^\s*[-*+]\s+", "", plain, flags=re.MULTILINE)
+        # Bỏ ký tự markdown còn lại (bold/italic/header/quote/strike)
+        plain = re.sub(r"[*_~#>]+", "", plain)
+        # Giảm nhiễu khi LLM trả bảng markdown
+        plain = plain.replace("|", " ")
+        # Chuẩn hóa khoảng trắng/newline
+        plain = re.sub(r"\s+", " ", plain).strip()
+        return plain
+
     def _speak(self, text: str, wait: bool = False):
         """
         Phát âm thanh phản hồi bằng gTTS.
@@ -467,8 +495,12 @@ class VoiceAssistant:
         Args:
             text: Câu cần phát âm (tiếng Việt)
         """
-        print(f"[🔊 TTS] {text}")
-        logger.info(f"[Voice] TTS: '{text}'")
+        spoken_text = self._normalize_for_tts(text)
+        print(f"[🔊 TTS] {spoken_text}")
+        logger.info(f"[Voice] TTS: '{spoken_text}'")
+
+        if not spoken_text:
+            return
 
         if self._gtts is None or self._pygame is None:
             return  # TTS chưa cài, bỏ qua
@@ -476,7 +508,7 @@ class VoiceAssistant:
         def tts_task():
             try:
                 import tempfile
-                tts = self._gtts(text=text, lang="vi", slow=False)
+                tts = self._gtts(text=spoken_text, lang="vi", slow=False)
                 # Lưu vào file tạm rồi phát
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as fp:
                     tmp_path = fp.name
@@ -533,7 +565,14 @@ class GeminiRAGAssistant:
     def __init__(self, api_key: str):
         self._api_key = api_key
         self._chain = None
+        self._llm = None
+        self._retriever = None
+        self._raw_genai_model = None
         self._setup_rag()
+
+    def is_ready(self) -> bool:
+        """Kiểm tra assistant còn ít nhất một đường trả lời khả dụng."""
+        return bool(self._chain is not None or self._llm is not None or self._raw_genai_model is not None)
 
     def _setup_rag(self):
         """
@@ -543,31 +582,59 @@ class GeminiRAGAssistant:
         import asyncio
         asyncio.set_event_loop(asyncio.new_event_loop())
         try:
-            from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
-            from langchain.chains import RetrievalQA
-            from langchain_community.vectorstores import FAISS
-            from langchain_community.document_loaders import TextLoader
-            from langchain.text_splitter import CharacterTextSplitter
             import google.generativeai as genai
 
-            # Cấu hình API key
+            # Cấu hình API key cho cả đường LangChain và đường gọi SDK trực tiếp.
             genai.configure(api_key=self._api_key)
-            
-            # --- THÊM DÒNG NÀY VÀO ĐỂ FIX LỖI SECRETSTR ---
             os.environ["GOOGLE_API_KEY"] = self._api_key
 
-            # Khởi tạo Gemini LLM (gemini-2.5-flash: nhanh hơn, miễn phí)
-            llm = ChatGoogleGenerativeAI(
-                model="gemini-2.5-flash",
-                # google_api_key=self._api_key,
-                temperature=0.3,
-                convert_system_message_to_human=True
-            )
+            # Chọn model hợp lệ theo API key hiện tại để tránh lỗi 404 model not found.
+            selected_model = "gemini-2.0-flash"
+            try:
+                available = {
+                    str(m.name).replace("models/", "")
+                    for m in genai.list_models()
+                    if "generateContent" in (getattr(m, "supported_generation_methods", []) or [])
+                }
+                for cand in ["gemini-3-flash-preview", "gemini-3-pro-preview", "gemini-3.1-pro-preview", "gemini-pro-latest"]:
+                    if cand in available:
+                        selected_model = cand
+                        break
+            except Exception as model_pick_err:
+                logger.warning(f"[RAG] Không lấy được danh sách model, dùng mặc định {selected_model}: {model_pick_err}")
+
+            self._raw_genai_model = genai.GenerativeModel(selected_model)
+
+            # Cố gắng khởi tạo LangChain LLM trước; nếu lỗi vẫn giữ SDK fallback.
+            try:
+                from langchain_google_genai import ChatGoogleGenerativeAI
+                self._llm = ChatGoogleGenerativeAI(
+                    model=selected_model,
+                    temperature=0.3,
+                    convert_system_message_to_human=True,
+                )
+            except Exception as llm_err:
+                self._llm = None
+                logger.warning(f"[RAG] Không thể khởi tạo ChatGoogleGenerativeAI: {llm_err}. Sẽ dùng SDK fallback.")
+
+            # Nếu không có LangChain LLM thì bỏ qua bước build RAG chain.
+            if self._llm is None:
+                logger.warning("[RAG] LangChain LLM không khả dụng, chạy chế độ Gemini fallback không vector DB.")
+                return
+
+            from langchain_google_genai import GoogleGenerativeAIEmbeddings
+            from langchain_community.vectorstores import FAISS
+            from langchain_community.document_loaders import TextLoader
+            try:
+                from langchain.text_splitter import CharacterTextSplitter
+            except Exception:
+                from langchain_text_splitters import CharacterTextSplitter
+
+            llm = self._llm
 
             # Khởi tạo Google Embeddings
             embeddings = GoogleGenerativeAIEmbeddings(
                 model="models/gemini-embedding-001",
-                # google_api_key=self._api_key
             )
 
             # Đường dẫn đến knowledge_base.txt
@@ -587,9 +654,9 @@ class GeminiRAGAssistant:
 
                 # Tạo FAISS vector store
                 vector_store = FAISS.from_documents(chunks, embeddings)
+                self._retriever = vector_store.as_retriever(search_kwargs={"k": 3})
 
-                # Tạo RAG chain với prompt tiếng Việt
-                from langchain.prompts import PromptTemplate
+                # Tạo RAG chain với prompt tiếng Việt (nếu PromptTemplate khả dụng).
                 prompt_template = """Bạn là trợ lý AI của hệ thống nhà thông minh YoloHome.
 Hãy trả lời câu hỏi dựa trên thông tin sau đây. Trả lời ngắn gọn, rõ ràng bằng tiếng Việt.
 Nếu không tìm thấy thông tin phù hợp, hãy trả lời dựa trên kiến thức chung của bạn.
@@ -600,18 +667,36 @@ Thông tin tham khảo:
 Câu hỏi: {question}
 
 Trả lời:"""
-                PROMPT = PromptTemplate(
-                    template=prompt_template,
-                    input_variables=["context", "question"]
-                )
+                PROMPT = None
+                try:
+                    from langchain.prompts import PromptTemplate
+                    PROMPT = PromptTemplate(
+                        template=prompt_template,
+                        input_variables=["context", "question"],
+                    )
+                except Exception as prompt_err:
+                    logger.warning(
+                        f"[RAG] Không import được PromptTemplate ({prompt_err}). "
+                        "Sẽ dùng prompt mặc định của RetrievalQA hoặc fallback thủ công."
+                    )
 
-                self._chain = RetrievalQA.from_chain_type(
-                    llm=llm,
-                    chain_type="stuff",
-                    retriever=vector_store.as_retriever(search_kwargs={"k": 3}),
-                    chain_type_kwargs={"prompt": PROMPT},
-                    return_source_documents=False
-                )
+                # Ưu tiên dùng RetrievalQA nếu bản langchain hiện tại còn hỗ trợ.
+                try:
+                    from langchain.chains import RetrievalQA
+                    chain_type_kwargs = {"prompt": PROMPT} if PROMPT is not None else {}
+                    self._chain = RetrievalQA.from_chain_type(
+                        llm=llm,
+                        chain_type="stuff",
+                        retriever=self._retriever,
+                        chain_type_kwargs=chain_type_kwargs,
+                        return_source_documents=False,
+                    )
+                except Exception as chain_err:
+                    self._chain = None
+                    logger.warning(
+                        f"[RAG] RetrievalQA không khả dụng ở phiên bản langchain hiện tại: {chain_err}. "
+                        "Sẽ dùng fallback LLM + retriever thủ công."
+                    )
                 logger.info("[RAG] ✅ Gemini RAG Assistant đã sẵn sàng với knowledge base.")
             else:
                 # Fallback: Gemini thuần không có RAG
@@ -635,7 +720,7 @@ Trả lời:"""
         Returns:
             Câu trả lời từ Gemini.
         """
-        if self._chain is None:
+        if self._llm is None and self._raw_genai_model is None:
             return "Tính năng trợ lý AI chưa được kích hoạt."
         try:
             # Xây dựng context lịch sử hội thoại nếu có
@@ -647,7 +732,7 @@ Trả lời:"""
                     lines.append(f"{role}: {item.get('text', '')}")
                 history_str = "\n".join(lines)
 
-            # Nếu có lịch sử, đínhkèm vào câu hỏi
+            # Nếu có lịch sử, đính kèm vào câu hỏi
             augmented_question = question
             if history_str:
                 augmented_question = (
@@ -655,8 +740,58 @@ Trả lời:"""
                     f"Câu hỏi mới: {question}"
                 )
 
-            result = self._chain.invoke({"query": augmented_question})
-            return result.get("result", "Xin lỗi, tôi không tìm được câu trả lời.")
+            # Ưu tiên đường RAG chain nếu có.
+            if self._chain is not None:
+                result = self._chain.invoke({"query": augmented_question})
+                return result.get("result", "Xin lỗi, tôi không tìm được câu trả lời.")
+
+            # Fallback: tự retrieve context rồi hỏi LLM trực tiếp.
+            context = ""
+            if self._retriever is not None:
+                try:
+                    docs = self._retriever.invoke(augmented_question)
+                except Exception:
+                    docs = self._retriever.get_relevant_documents(augmented_question)
+                context = "\n\n".join(
+                    getattr(doc, "page_content", "") for doc in docs[:3]
+                ).strip()
+
+            if context:
+                prompt = (
+                    "Bạn là trợ lý AI của hệ thống nhà thông minh YoloHome. "
+                    "Hãy trả lời ngắn gọn, rõ ràng bằng tiếng Việt dựa trên ngữ cảnh sau.\n\n"
+                    f"Ngữ cảnh:\n{context}\n\n"
+                    f"Câu hỏi: {augmented_question}\n\nTrả lời:"
+                )
+            else:
+                prompt = (
+                    "Bạn là trợ lý AI của hệ thống nhà thông minh YoloHome. "
+                    "Hãy trả lời ngắn gọn, rõ ràng bằng tiếng Việt.\n\n"
+                    f"Câu hỏi: {augmented_question}\n\nTrả lời:"
+                )
+
+            content = None
+            if self._llm is not None:
+                try:
+                    llm_resp = self._llm.invoke(prompt)
+                    content = getattr(llm_resp, "content", llm_resp)
+                except Exception as llm_err:
+                    logger.warning(f"[RAG] LangChain LLM invoke lỗi, chuyển SDK fallback: {llm_err}")
+
+            if content is None:
+                raw_resp = self._raw_genai_model.generate_content(prompt)
+                content = getattr(raw_resp, "text", "")
+            if isinstance(content, list):
+                text_parts = []
+                for part in content:
+                    if isinstance(part, dict) and "text" in part:
+                        text_parts.append(str(part["text"]))
+                    else:
+                        text_parts.append(str(part))
+                content = " ".join(text_parts)
+
+            final_text = str(content).strip()
+            return final_text or "Xin lỗi, tôi không nhận được nội dung trả lời từ mô hình AI."
         except Exception as e:
             logger.error(f"[RAG] Lỗi khi hỏi Gemini: {e}")
             return "Xin lỗi, đã có lỗi khi xử lý câu hỏi của bạn."
