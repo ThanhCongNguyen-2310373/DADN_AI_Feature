@@ -237,54 +237,48 @@ class IntentNLPEngine:
     @staticmethod
     def _patch_fasttext_model(model) -> None:
         """
-        Patch fasttext C extension methods for NumPy 2.0+ compatibility.
+        Patch fasttext model.predict (Python wrapper) for NumPy 2.0+ compatibility.
 
-        The issue: fasttext's C extension (model.f.predict / model.f.multilinePredict)
-        calls np.array(probs, copy=False) internally, which raises ValueError in
-        NumPy 2.0 because copy=False cannot be honored when the source array
-        format doesn't match.
+        The issue: fasttext's C extension calls np.array(probs, copy=False) internally,
+        which raises ValueError in NumPy 2.0 when dtype doesn't match exactly.
 
-        Solution: patch model.f.predict and model.f.multilinePredict directly
-        (not model.predict — that is a thin Python wrapper that just calls
-        model.f.predict, so patching it does NOT intercept the internal C call).
-
-        IMPORTANT: model.f.predict returns (labels, probs) — we swap to
-        (probs, labels) to match what the Python wrapper model.predict() exposed
-        to callers expects.
+        Since model.f is read-only on fasttext_pybind, we must patch model.predict
+        (the Python wrapper). Key points:
+          - Pass text WITHOUT '\n' — model.predict adds it via check() internally.
+          - model.f.predict returns (labels, probs); Python wrapper swaps to
+            (probs, labels) for callers, so our patched wrapper must do the same.
+          - We intercept before np.array(..., copy=False) runs inside C, then
+            return via np.asarray(probs) to be NumPy 2.0 safe.
         """
         try:
+            # Save both levels
+            original_predict = model.predict
             original_f_predict = model.f.predict
             original_f_multiline = getattr(model.f, "multilinePredict", None)
 
-            # ── Patch model.f.predict (single-line) ──────────────────────────
-            def patched_f_predict(text, k=1, threshold=0.0, on_unicode_error="strict"):
-                # model.f.predict internally does: check() + self._cpp_predict() + np.array(..., copy=False)
-                # We intercept the result before np.array so NumPy 2.0 can't fail.
-                result = original_f_predict(text, k, threshold, on_unicode_error)
-                if result:
-                    labels, probs = result  # (labels_tuple, probs_tuple)
-                else:
-                    labels, probs = (), ()
+            # ── Patch model.predict (single-line) ─────────────────────────────
+            # model.predict(text) calls: check(text) → model.f.predict(text+'\n')
+            # model.f.predict returns (labels_tuple, probs_tuple)
+            # Python wrapper does: return labels, np.array(probs, copy=False)
+            # We replace model.predict entirely to use np.asarray instead.
+            def patched_predict(text, k=1, threshold=0.0, on_unicode_error="strict"):
+                if isinstance(text, list):
+                    # multilinePredict path (text already has '\n' appended by caller)
+                    all_labels, all_probs = original_f_multiline(
+                        text, k, threshold, on_unicode_error
+                    )
+                    return all_labels, np.asarray(all_probs)
+                # Single-line: pass WITHOUT '\n' — model.predict's check() adds it
+                labels, probs = original_f_predict(
+                    text, k, threshold, on_unicode_error
+                )
+                # Python wrapper convention: (labels, probs)  ← already in that order
                 return labels, np.asarray(probs)
 
-            model.f.predict = patched_f_predict
-
-            # ── Patch model.f.multilinePredict (multi-line) ───────────────────
-            if original_f_multiline is not None:
-                def patched_f_multiline(text_list, k=1, threshold=0.0, on_unicode_error="strict"):
-                    result = original_f_multiline(text_list, k, threshold, on_unicode_error)
-                    if result:
-                        all_labels, all_probs = result
-                    else:
-                        all_labels, all_probs = (), ()
-                    # Swap: caller (model.predict) expects (probs, labels) per line
-                    return all_probs, all_labels
-
-                model.f.multilinePredict = patched_f_multiline
-
-            logger.debug("[Intent] Patched fasttext C extension for NumPy 2.0+ compatibility")
+            model.predict = patched_predict
+            logger.debug("[Intent] Patched fasttext model.predict for NumPy 2.0+ compatibility")
         except AttributeError as e:
-            logger.warning("[Intent] Fasttext C extension patching not supported (%s); using BoW fallback.", e)
+            logger.warning("[Intent] Fasttext model.predict patching failed (%s); using BoW fallback.", e)
 
     def _ensure_ml_model(self) -> None:
         os.makedirs(_DATA_DIR, exist_ok=True)
