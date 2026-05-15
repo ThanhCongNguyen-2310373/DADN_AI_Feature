@@ -778,6 +778,25 @@ async def voice_ask(req: VoiceAskRequest, _=Depends(require_auth)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/api/voice/trigger-wake", tags=["AI Features"],
+          summary="Kích hoạt wake word từ Dashboard",
+          description="Tương đương với việc nói 'yolo' để đánh thức Voice Assistant. "
+                      "Phát lời chào, đợi lệnh thoại, xử lý và phản hồi. "
+                      "Chạy trong background thread, không block request.")
+async def voice_trigger_wake(_=Depends(require_auth)):
+    if _voice_assistant is None:
+        raise HTTPException(status_code=503, detail="Voice Assistant chưa được khởi động.")
+    try:
+        if not hasattr(_voice_assistant, "trigger_wake"):
+            raise HTTPException(status_code=501, detail="Voice Assistant không hỗ trợ trigger_wake.")
+        _voice_assistant.trigger_wake()
+        return JSONResponse({"status": "ok", "message": "Voice Assistant đã được kích hoạt."})
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/ml/forecast", tags=["AI Features"],
          summary="Dự báo tiêu thụ năng lượng",
          description="ML endpoint: dự báo kWh trong các giờ tới từ lịch sử bật/tắt thiết bị.")

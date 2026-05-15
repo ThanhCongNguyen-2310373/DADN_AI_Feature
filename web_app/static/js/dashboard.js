@@ -146,6 +146,55 @@ async function sendControl(device, value) {
     }
 }
 
+// ── Voice Wake (trigger_wake) ──
+let _wakeBusy = false;
+
+async function triggerWake() {
+    const btn = el("btn-yolo");
+    if (_wakeBusy) {
+        showToast("Đang xử lý, vui lòng đợi...", "", "warn");
+        return;
+    }
+    _wakeBusy = true;
+    if (btn) {
+        btn.classList.add("listening");
+        btn.disabled = true;
+    }
+    showToast("Đang lắng nghe...", "Nói lệnh của bạn", "info");
+
+    try {
+        const resp = await fetch("/api/voice/trigger-wake", { method: "POST" });
+        // Phản hồi nhanh (VoiceAssistant chạy trong thread riêng)
+        // Không cần đợi kết quả — chat history sẽ được cập nhật qua pollChat()
+    } catch (e) {
+        showToast("Lỗi kích hoạt Voice AI", String(e), "error");
+    } finally {
+        // Tự động reset sau 15s (đề phòng server không phản hồi nhanh)
+        setTimeout(() => {
+            _wakeBusy = false;
+            if (btn) {
+                btn.classList.remove("listening");
+                btn.disabled = false;
+            }
+        }, 15000);
+    }
+}
+
+// pollChat cũng reset nút khi có phản hồi mới từ Voice AI
+const _origPollChat = pollChat;
+async function pollChat() {
+    await _origPollChat();
+    // Nếu chat history vừa được cập nhật, Voice AI đã xong → reset nút
+    if (_wakeBusy) {
+        _wakeBusy = false;
+        const btn = el("btn-yolo");
+        if (btn) {
+            btn.classList.remove("listening");
+            btn.disabled = false;
+        }
+    }
+}
+
 // ── Chat polling ──
 let _lastChatLen = 0;
 

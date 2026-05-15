@@ -238,6 +238,9 @@ class IntentNLPEngine:
     def _patch_fasttext_model(model) -> None:
         """Wrap fasttext model's predict method for NumPy 2.0+ compatibility."""
         try:
+            # fasttext>=0.9.14 exposes .predict via model.predict (top-level callable)
+            # but the underlying C++ layer uses np.array(..., copy=False) which breaks NumPy 2.
+            # We wrap model.predict so that np.asarray() is used instead.
             original_predict = model.predict
 
             def patched_predict(text, k=1, threshold=0.0, on_unicode_error='strict'):
@@ -250,23 +253,21 @@ class IntentNLPEngine:
 
                 if isinstance(text, list):
                     text = [check(entry) for entry in text]
-                    all_labels, all_probs = model.f.multilinePredict(
-                        text, k, threshold, on_unicode_error)
-                    return all_labels, all_probs
+                    result = original_predict(text, k=k, threshold=threshold, on_unicode_error=on_unicode_error)
+                    return result
                 else:
                     text = check(text)
-                    predictions = model.f.predict(text, k, threshold, on_unicode_error)
-                    if predictions:
-                        probs, labels = zip(*predictions)
+                    result = original_predict(text, k=k, threshold=threshold, on_unicode_error=on_unicode_error)
+                    if result:
+                        probs, labels = zip(*result)
                     else:
                         probs, labels = ([], ())
-                    # Use np.asarray instead of np.array(..., copy=False) for NumPy 2.0+ compatibility
                     return labels, np.asarray(probs)
 
             model.predict = patched_predict
-            logger.debug("[Intent] Patched loaded fasttext model for NumPy 2.0+ compatibility")
-        except Exception as e:
-            logger.warning("[Intent] Failed to patch fasttext model: %s", e)
+            logger.debug("[Intent] Patched fasttext model for NumPy 2.0+ compatibility")
+        except AttributeError as e:
+            logger.warning("[Intent] Fasttext model API does not support patching (%s); using BoW fallback.", e)
 
     def _ensure_ml_model(self) -> None:
         os.makedirs(_DATA_DIR, exist_ok=True)

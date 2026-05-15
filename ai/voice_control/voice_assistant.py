@@ -97,6 +97,67 @@ class VoiceAssistant:
         )
         rag_init_thread.start()
 
+    def trigger_wake(self):
+        """
+        Kích hoạt wake word giả lập từ Dashboard web.
+        Tương đương với việc nhận diện được từ 'yolo' trong microphone.
+        Luồng: phát lời chào → đợi lệnh → nhận lệnh → xử lý → phản hồi.
+        Chạy trong thread riêng để không block caller.
+        """
+        if self._sr is None:
+            logger.warning("[Voice] trigger_wake: SpeechRecognition chưa sẵn sàng.")
+            return
+
+        def _do():
+            try:
+                logger.info("[Voice] 🟢 Dashboard kích hoạt wake — đang lắng nghe lệnh...")
+                # Bước 1: Phát lời chào, đợi xong rồi mới nhận lệnh
+                self._speak("Vâng, tôi nghe. Bạn muốn làm gì?", wait=True)
+
+                # Bước 2: Lắng nghe câu lệnh thực sự
+                # (dùng self._recognizer.listen trực tiếp, không qua _listen_loop)
+                sr = self._sr
+                with sr.Microphone() as source:
+                    try:
+                        # Re-calibrate energy threshold nhẹ trước khi nghe lệnh
+                        if getattr(config, "VOICE_AUTO_ENERGY", True):
+                            try:
+                                self._recognizer.adjust_for_ambient_noise(
+                                    source,
+                                    duration=float(getattr(config, "VOICE_AMBIENT_RECALIB_SEC", 0.5))
+                                )
+                            except Exception:
+                                pass
+
+                        audio = self._recognizer.listen(
+                            source,
+                            timeout=config.VOICE_TIMEOUT,
+                            phrase_time_limit=config.VOICE_PHRASE_LIMIT,
+                        )
+                        command_text = self._speech_to_text(audio)
+
+                        if command_text:
+                            logger.info(f"[Voice] 📝 Lệnh nhận được: '{command_text}'")
+                            self._process_command(command_text)
+                        else:
+                            self._speak("Xin lỗi, tôi chưa nghe rõ. Bạn có thể nhắc lại không?", wait=True)
+
+                    except sr.WaitTimeoutError:
+                        logger.info("[Voice] ⏱️  Không có giọng nói trong thời gian chờ.")
+                        self._speak("Tôi đang chờ, bạn cứ nói nhé.", wait=True)
+                    except sr.UnknownValueError:
+                        logger.warning("[Voice] ⚠️  Không nhận diện được giọng nói.")
+                        self._speak("Xin lỗi, tôi chưa nghe rõ. Bạn có thể nhắc lại không?", wait=True)
+                    except sr.RequestError as e:
+                        logger.error(f"[Voice] ❌ Lỗi STT khi trigger_wake: {e}")
+                        self._speak("Đã có lỗi khi xử lý giọng nói. Vui lòng thử lại.", wait=True)
+
+            except Exception as e:
+                logger.error(f"[Voice] ❌ Lỗi trong trigger_wake: {e}")
+
+        thread = threading.Thread(target=_do, daemon=True, name="VoiceAI-TriggerWake")
+        thread.start()
+
     def _init_rag(self):
         """Khởi tạo RAG trong background thread để không làm chậm startup."""
         try:

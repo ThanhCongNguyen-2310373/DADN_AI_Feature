@@ -1,6 +1,6 @@
 {
-  "total": 32,
-  "correct": 32,
+  "total": 48,
+  "correct": 48,
   "accuracy": 1.0,
   "per_person": {
     "Bame": {
@@ -10,12 +10,19 @@
       "similarity_mean": 0.8790453648184446,
       "similarity_std": 0.20992575617326692
     },
+    "Ban Cong": {
+      "total": 16,
+      "correct": 16,
+      "accuracy": 1.0,
+      "similarity_mean": 0.7579991903509149,
+      "similarity_std": 0.2422361603386929
+    },
     "Cong": {
       "total": 16,
       "correct": 16,
       "accuracy": 1.0,
-      "similarity_mean": 0.7435516054943905,
-      "similarity_std": 0.22620384616863337
+      "similarity_mean": 0.7346962502275843,
+      "similarity_std": 0.2341471503654626
     }
   }
 }

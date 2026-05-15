@@ -119,8 +119,10 @@
       <h2 class="card-title"><i class="fas fa-microphone"></i> Trợ lý giọng nói</h2>
       <div id="chat-messages" class="chat-messages"></div>
       <div class="chat-footer">
-        <span class="chat-hint">Nói "<strong>Yolo</strong>" để kích hoạt</span>
-        <span id="voice-indicator" class="voice-indicator">
+        <button id="btn-yolo" class="btn-yolo" onclick="triggerWake()" title="Nhấn để nói lệnh, tương đương nói 'Yolo'">
+          <i class="fas fa-microphone"></i> Nói "Yolo"
+        </button>
+        <span id="voice-indicator" class="voice-indicator" aria-hidden="true">
           <i class="fas fa-circle-dot"></i>
         </span>
       </div>

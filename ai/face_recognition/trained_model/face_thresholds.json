@@ -5,9 +5,15 @@
     "recommended_threshold": 0.33999999999999997,
     "samples": 16
   },
+  "Ban Cong": {
+    "mean_similarity": 0.7579991903509149,
+    "std_similarity": 0.2422361603386929,
+    "recommended_threshold": 0.33999999999999997,
+    "samples": 16
+  },
   "Cong": {
-    "mean_similarity": 0.7435516054943905,
-    "std_similarity": 0.22620384616863337,
+    "mean_similarity": 0.7346962502275843,
+    "std_similarity": 0.2341471503654626,
     "recommended_threshold": 0.33999999999999997,
     "samples": 16
   }
