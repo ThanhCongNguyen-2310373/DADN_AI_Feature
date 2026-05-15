@@ -236,49 +236,37 @@ class IntentNLPEngine:
 
     @staticmethod
     def _patch_fasttext_model(model) -> None:
-        """
-        Patch fasttext model.predict (Python wrapper) for NumPy 2.0+ compatibility.
-
-        The issue: fasttext's C extension calls np.array(probs, copy=False) internally,
-        which raises ValueError in NumPy 2.0 when dtype doesn't match exactly.
-
-        Since model.f is read-only on fasttext_pybind, we must patch model.predict
-        (the Python wrapper). Key points:
-          - Pass text WITHOUT '\n' — model.predict adds it via check() internally.
-          - model.f.predict returns (labels, probs); Python wrapper swaps to
-            (probs, labels) for callers, so our patched wrapper must do the same.
-          - We intercept before np.array(..., copy=False) runs inside C, then
-            return via np.asarray(probs) to be NumPy 2.0 safe.
-        """
+        """Wrap fasttext model's predict method for NumPy 2.0+ compatibility."""
         try:
-            # Save both levels
             original_predict = model.predict
-            original_f_predict = model.f.predict
-            original_f_multiline = getattr(model.f, "multilinePredict", None)
 
-            # ── Patch model.predict (single-line) ─────────────────────────────
-            # model.predict(text) calls: check(text) → model.f.predict(text+'\n')
-            # model.f.predict returns (labels_tuple, probs_tuple)
-            # Python wrapper does: return labels, np.array(probs, copy=False)
-            # We replace model.predict entirely to use np.asarray instead.
-            def patched_predict(text, k=1, threshold=0.0, on_unicode_error="strict"):
+            def patched_predict(text, k=1, threshold=0.0, on_unicode_error='strict'):
+                """Patched predict that uses np.asarray instead of np.array(..., copy=False)."""
+                def check(entry):
+                    if entry.find('\n') != -1:
+                        raise ValueError("predict processes one line at a time (remove '\\n')")
+                    entry += "\n"
+                    return entry
+
                 if isinstance(text, list):
-                    # multilinePredict path (text already has '\n' appended by caller)
-                    all_labels, all_probs = original_f_multiline(
-                        text, k, threshold, on_unicode_error
-                    )
-                    return all_labels, np.asarray(all_probs)
-                # Single-line: pass WITHOUT '\n' — model.predict's check() adds it
-                labels, probs = original_f_predict(
-                    text, k, threshold, on_unicode_error
-                )
-                # Python wrapper convention: (labels, probs)  ← already in that order
-                return labels, np.asarray(probs)
+                    text = [check(entry) for entry in text]
+                    all_labels, all_probs = model.f.multilinePredict(
+                        text, k, threshold, on_unicode_error)
+                    return all_labels, all_probs
+                else:
+                    text = check(text)
+                    predictions = model.f.predict(text, k, threshold, on_unicode_error)
+                    if predictions:
+                        probs, labels = zip(*predictions)
+                    else:
+                        probs, labels = ([], ())
+                    # Use np.asarray instead of np.array(..., copy=False) for NumPy 2.0+ compatibility
+                    return labels, np.asarray(probs)
 
             model.predict = patched_predict
-            logger.debug("[Intent] Patched fasttext model.predict for NumPy 2.0+ compatibility")
-        except AttributeError as e:
-            logger.warning("[Intent] Fasttext model.predict patching failed (%s); using BoW fallback.", e)
+            logger.debug("[Intent] Patched loaded fasttext model for NumPy 2.0+ compatibility")
+        except Exception as e:
+            logger.warning("[Intent] Failed to patch fasttext model: %s", e)
 
     def _ensure_ml_model(self) -> None:
         os.makedirs(_DATA_DIR, exist_ok=True)
