@@ -236,32 +236,55 @@ class IntentNLPEngine:
 
     @staticmethod
     def _patch_fasttext_model(model) -> None:
-        """Wrap fasttext model's predict method for NumPy 2.0+ compatibility."""
+        """
+        Patch fasttext C extension methods for NumPy 2.0+ compatibility.
+
+        The issue: fasttext's C extension (model.f.predict / model.f.multilinePredict)
+        calls np.array(probs, copy=False) internally, which raises ValueError in
+        NumPy 2.0 because copy=False cannot be honored when the source array
+        format doesn't match.
+
+        Solution: patch model.f.predict and model.f.multilinePredict directly
+        (not model.predict — that is a thin Python wrapper that just calls
+        model.f.predict, so patching it does NOT intercept the internal C call).
+
+        IMPORTANT: model.f.predict returns (labels, probs) — we swap to
+        (probs, labels) to match what the Python wrapper model.predict() exposed
+        to callers expects.
+        """
         try:
-            # fasttext's C++ layer uses np.array(..., copy=False) which breaks NumPy 2.
-            # We wrap model.predict so that np.asarray() is used instead of np.array().
-            # IMPORTANT: Do NOT add a check()/append '\n' wrapper here — model.predict
-            # already does that internally and calling it twice causes ValueError.
-            original_predict = model.predict
+            original_f_predict = model.f.predict
+            original_f_multiline = getattr(model.f, "multilinePredict", None)
 
-            def patched_predict(text, k=1, threshold=0.0, on_unicode_error='strict'):
-                """Patched predict that uses np.asarray instead of np.array(..., copy=False)."""
-                if isinstance(text, list):
-                    # multilinePredict already handles the newline internally
-                    return original_predict(text, k=k, threshold=threshold, on_unicode_error=on_unicode_error)
+            # ── Patch model.f.predict (single-line) ──────────────────────────
+            def patched_f_predict(text, k=1, threshold=0.0, on_unicode_error="strict"):
+                # model.f.predict internally does: check() + self._cpp_predict() + np.array(..., copy=False)
+                # We intercept the result before np.array so NumPy 2.0 can't fail.
+                result = original_f_predict(text, k, threshold, on_unicode_error)
+                if result:
+                    labels, probs = result  # (labels_tuple, probs_tuple)
                 else:
-                    # Pass text as-is; model.predict internally validates and appends '\n'
-                    result = original_predict(text, k=k, threshold=threshold, on_unicode_error=on_unicode_error)
-                    if result:
-                        probs, labels = zip(*result)
-                    else:
-                        probs, labels = ([], ())
-                    return labels, np.asarray(probs)
+                    labels, probs = (), ()
+                return labels, np.asarray(probs)
 
-            model.predict = patched_predict
-            logger.debug("[Intent] Patched fasttext model for NumPy 2.0+ compatibility")
+            model.f.predict = patched_f_predict
+
+            # ── Patch model.f.multilinePredict (multi-line) ───────────────────
+            if original_f_multiline is not None:
+                def patched_f_multiline(text_list, k=1, threshold=0.0, on_unicode_error="strict"):
+                    result = original_f_multiline(text_list, k, threshold, on_unicode_error)
+                    if result:
+                        all_labels, all_probs = result
+                    else:
+                        all_labels, all_probs = (), ()
+                    # Swap: caller (model.predict) expects (probs, labels) per line
+                    return all_probs, all_labels
+
+                model.f.multilinePredict = patched_f_multiline
+
+            logger.debug("[Intent] Patched fasttext C extension for NumPy 2.0+ compatibility")
         except AttributeError as e:
-            logger.warning("[Intent] Fasttext model API does not support patching (%s); using BoW fallback.", e)
+            logger.warning("[Intent] Fasttext C extension patching not supported (%s); using BoW fallback.", e)
 
     def _ensure_ml_model(self) -> None:
         os.makedirs(_DATA_DIR, exist_ok=True)
