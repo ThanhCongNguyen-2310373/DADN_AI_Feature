@@ -238,25 +238,19 @@ class IntentNLPEngine:
     def _patch_fasttext_model(model) -> None:
         """Wrap fasttext model's predict method for NumPy 2.0+ compatibility."""
         try:
-            # fasttext>=0.9.14 exposes .predict via model.predict (top-level callable)
-            # but the underlying C++ layer uses np.array(..., copy=False) which breaks NumPy 2.
-            # We wrap model.predict so that np.asarray() is used instead.
+            # fasttext's C++ layer uses np.array(..., copy=False) which breaks NumPy 2.
+            # We wrap model.predict so that np.asarray() is used instead of np.array().
+            # IMPORTANT: Do NOT add a check()/append '\n' wrapper here — model.predict
+            # already does that internally and calling it twice causes ValueError.
             original_predict = model.predict
 
             def patched_predict(text, k=1, threshold=0.0, on_unicode_error='strict'):
                 """Patched predict that uses np.asarray instead of np.array(..., copy=False)."""
-                def check(entry):
-                    if entry.find('\n') != -1:
-                        raise ValueError("predict processes one line at a time (remove '\\n')")
-                    entry += "\n"
-                    return entry
-
                 if isinstance(text, list):
-                    text = [check(entry) for entry in text]
-                    result = original_predict(text, k=k, threshold=threshold, on_unicode_error=on_unicode_error)
-                    return result
+                    # multilinePredict already handles the newline internally
+                    return original_predict(text, k=k, threshold=threshold, on_unicode_error=on_unicode_error)
                 else:
-                    text = check(text)
+                    # Pass text as-is; model.predict internally validates and appends '\n'
                     result = original_predict(text, k=k, threshold=threshold, on_unicode_error=on_unicode_error)
                     if result:
                         probs, labels = zip(*result)
